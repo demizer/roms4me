@@ -10,12 +10,55 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from sqlmodel import select, func
 
+from roms4me.core.config import add_dat_path as config_add_dat, add_rom_path as config_add_rom
+from roms4me.core.config import load_config, remove_dat_path as config_remove_dat
+from roms4me.core.config import remove_rom_path as config_remove_rom
 from roms4me.core.database import get_session
-from roms4me.models.db import DatPath, PrescanInfo, RomPath, ScanMeta, ScanResult, System
+from roms4me.models.db import PrescanInfo, ScanMeta, ScanResult, System
 from roms4me.services.dat_parser import parse_dat_file, scan_dat_dir
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api")
+
+
+class _ResolvedPath:
+    """Lightweight shim so scan code can use .path and .system_id like the old DB models."""
+
+    __slots__ = ("path", "system_id")
+
+    def __init__(self, path: str, system_id: int):
+        self.path = path
+        self.system_id = system_id
+
+
+def _resolve_paths(session) -> tuple[list[_ResolvedPath], list[_ResolvedPath]]:
+    """Load config and resolve entries to system IDs, creating System rows as needed.
+
+    Returns (dat_paths, rom_paths) with .path and .system_id attributes.
+    """
+    cfg = load_config()
+    dat_resolved = []
+    rom_resolved = []
+
+    for entry in cfg.dat_paths:
+        system = session.exec(select(System).where(System.name == entry.system)).first()
+        if not system:
+            system = System(name=entry.system)
+            session.add(system)
+            session.commit()
+            session.refresh(system)
+        dat_resolved.append(_ResolvedPath(entry.path, system.id))
+
+    for entry in cfg.rom_paths:
+        system = session.exec(select(System).where(System.name == entry.system)).first()
+        if not system:
+            system = System(name=entry.system)
+            session.add(system)
+            session.commit()
+            session.refresh(system)
+        rom_resolved.append(_ResolvedPath(entry.path, system.id))
+
+    return dat_resolved, rom_resolved
 
 
 
@@ -72,18 +115,11 @@ async def list_systems() -> list[System]:
 @router.get("/dats/paths")
 async def list_dat_paths() -> list[dict]:
     """List all configured DAT directories with detected systems."""
-    with get_session() as session:
-        paths = session.exec(select(DatPath)).all()
-        results = []
-        for dp in paths:
-            system = session.get(System, dp.system_id)
-            results.append({
-                "id": dp.id,
-                "path": dp.path,
-                "system_id": dp.system_id,
-                "system": system.name if system else "Unknown",
-            })
-        return results
+    cfg = load_config()
+    return [
+        {"path": entry.path, "system": entry.system}
+        for entry in cfg.dat_paths
+    ]
 
 
 @router.post("/dats/paths")
@@ -101,6 +137,7 @@ async def add_dat_path(req: DatPathRequest) -> list[dict]:
     with get_session() as session:
         for dat_info in discovered:
             system_name = dat_info["system"]
+            # Ensure System row exists in DB (scan results reference it)
             system = session.exec(
                 select(System).where(System.name == system_name)
             ).first()
@@ -108,42 +145,23 @@ async def add_dat_path(req: DatPathRequest) -> list[dict]:
                 system = System(name=system_name)
                 session.add(system)
                 session.commit()
-                session.refresh(system)
 
-            dat_file_path = dat_info["path"]
-            existing = session.exec(
-                select(DatPath).where(
-                    DatPath.path == dat_file_path,
-                    DatPath.system_id == system.id,
-                )
-            ).first()
-            if existing:
-                continue
-
-            dat_path = DatPath(path=dat_file_path, system_id=system.id)
-            session.add(dat_path)
-            session.commit()
-            session.refresh(dat_path)
-            added.append({
-                "id": dat_path.id,
-                "path": dat_path.path,
-                "system": system_name,
-            })
+            config_add_dat(dat_info["path"], system_name)
+            added.append({"path": dat_info["path"], "system": system_name})
 
     log.info("Added %d DAT files from %s", len(added), p)
     return added
 
 
-@router.delete("/dats/paths/{path_id}")
-async def remove_dat_path(path_id: int) -> dict[str, str]:
-    """Remove a DAT directory path."""
-    with get_session() as session:
-        dat_path = session.get(DatPath, path_id)
-        if not dat_path:
-            raise HTTPException(status_code=404, detail="Path not found")
-        session.delete(dat_path)
-        session.commit()
-        return {"status": "removed"}
+@router.delete("/dats/paths")
+async def remove_dat_path(req: dict) -> dict[str, str]:
+    """Remove a DAT path entry."""
+    path = req.get("path", "")
+    system = req.get("system", "")
+    if not path:
+        raise HTTPException(status_code=400, detail="Path required")
+    config_remove_dat(path, system)
+    return {"status": "removed"}
 
 
 # --- DAT files ---
@@ -152,29 +170,25 @@ async def remove_dat_path(path_id: int) -> dict[str, str]:
 @router.get("/dats")
 async def list_dats() -> list[dict[str, str]]:
     """List all DAT files from all configured paths."""
-    with get_session() as session:
-        dat_paths = session.exec(select(DatPath)).all()
-        results: list[dict[str, str]] = []
-        for dp in dat_paths:
-            system = session.get(System, dp.system_id)
-            system_name = system.name if system else "Unknown"
-            p = Path(dp.path)
-            if p.exists():
-                results.append({
-                    "name": p.stem,
-                    "path": str(p),
-                    "system": system_name,
-                })
+    cfg = load_config()
+    results: list[dict[str, str]] = []
+    for entry in cfg.dat_paths:
+        p = Path(entry.path)
+        if p.exists():
+            results.append({
+                "name": p.stem,
+                "path": str(p),
+                "system": entry.system,
+            })
     return results
 
 
 @router.get("/dats/{dat_name}")
 async def get_dat(dat_name: str):
     """Parse and return a DAT file's contents."""
-    with get_session() as session:
-        dat_paths = session.exec(select(DatPath)).all()
-    for dp in dat_paths:
-        p = Path(dp.path)
+    cfg = load_config()
+    for entry in cfg.dat_paths:
+        p = Path(entry.path)
         if p.stem == dat_name and p.exists():
             return parse_dat_file(p)
     raise HTTPException(status_code=404, detail="DAT file not found")
@@ -186,18 +200,11 @@ async def get_dat(dat_name: str):
 @router.get("/roms/paths")
 async def list_rom_paths() -> list[dict]:
     """List all configured ROM directories with system names."""
-    with get_session() as session:
-        paths = session.exec(select(RomPath)).all()
-        results = []
-        for rp in paths:
-            system = session.get(System, rp.system_id)
-            results.append({
-                "id": rp.id,
-                "path": rp.path,
-                "system_id": rp.system_id,
-                "system": system.name if system else "Unknown",
-            })
-        return results
+    cfg = load_config()
+    return [
+        {"path": entry.path, "system": entry.system}
+        for entry in cfg.rom_paths
+    ]
 
 
 @router.post("/roms/paths")
@@ -212,18 +219,15 @@ async def add_rom_path(req: RomPathRequest) -> list[dict]:
         raise HTTPException(status_code=400, detail="Directory does not exist")
 
     if req.system:
-        # Single path + explicit system
         result = _add_single_rom_path(p, req.system)
         return [result] if result else []
 
-    # Auto-detect: scan subdirectories and match to known systems
     subdirs = sorted([d.name for d in p.iterdir() if d.is_dir()])
     if not subdirs:
         raise HTTPException(status_code=400, detail="No subdirectories found")
 
     added: list[dict] = []
     for subdir_name in subdirs:
-        # Use the directory name as the system name
         result = _add_single_rom_path(p / subdir_name, subdir_name)
         if result:
             added.append(result)
@@ -232,41 +236,34 @@ async def add_rom_path(req: RomPathRequest) -> list[dict]:
 
 def _add_single_rom_path(p: Path, system_name: str) -> dict | None:
     """Add a single ROM path for a system. Returns the result dict, or None if duplicate."""
+    cfg = load_config()
+    # Check for duplicate
+    for entry in cfg.rom_paths:
+        if entry.path == str(p) and entry.system == system_name:
+            return None
+
+    # Ensure System row exists in DB
     with get_session() as session:
         system = session.exec(select(System).where(System.name == system_name)).first()
         if not system:
             system = System(name=system_name)
             session.add(system)
             session.commit()
-            session.refresh(system)
-        existing = session.exec(
-            select(RomPath).where(RomPath.path == str(p), RomPath.system_id == system.id)
-        ).first()
-        if existing:
-            return None
-        rom_path = RomPath(path=str(p), system_id=system.id)
-        session.add(rom_path)
-        session.commit()
-        session.refresh(rom_path)
-        log.info("Added ROM path: %s [%s]", p, system_name)
-        return {
-            "id": rom_path.id,
-            "path": rom_path.path,
-            "system_id": rom_path.system_id,
-            "system": system_name,
-        }
+
+    config_add_rom(str(p), system_name)
+    log.info("Added ROM path: %s [%s]", p, system_name)
+    return {"path": str(p), "system": system_name}
 
 
-@router.delete("/roms/paths/{path_id}")
-async def remove_rom_path(path_id: int) -> dict[str, str]:
+@router.delete("/roms/paths")
+async def remove_rom_path(req: dict) -> dict[str, str]:
     """Remove a ROM directory path."""
-    with get_session() as session:
-        rom_path = session.get(RomPath, path_id)
-        if not rom_path:
-            raise HTTPException(status_code=404, detail="Path not found")
-        session.delete(rom_path)
-        session.commit()
-        return {"status": "removed"}
+    path = req.get("path", "")
+    system = req.get("system", "")
+    if not path:
+        raise HTTPException(status_code=400, detail="Path required")
+    config_remove_rom(path, system)
+    return {"status": "removed"}
 
 
 # --- Stats ---
@@ -275,14 +272,22 @@ async def remove_rom_path(path_id: int) -> dict[str, str]:
 @router.get("/stats")
 async def get_stats() -> dict:
     """Return overview stats for the welcome page."""
+    cfg = load_config()
     with get_session() as session:
         system_count = len(session.exec(select(System)).all())
-        dat_count = len(session.exec(select(DatPath)).all())
-        rom_count = len(session.exec(select(RomPath)).all())
+        dat_count = len(cfg.dat_paths)
+        rom_count = len(cfg.rom_paths)
         scan_count = len(session.exec(select(ScanResult)).all())
 
         meta = session.exec(select(ScanMeta)).first()
         last_scan = meta.last_scan.isoformat() if meta and meta.last_scan else None
+
+        # Detect stale scan data: systems with results but no config path
+        config_systems = {e.system for e in cfg.rom_paths}
+        all_systems = {s.id: s.name for s in session.exec(select(System)).all()}
+        result_system_ids = {sr.system_id for sr in session.exec(select(ScanResult)).all()}
+        systems_with_results = {all_systems[sid] for sid in result_system_ids if sid in all_systems}
+        stale_systems = sorted(systems_with_results - config_systems)
 
     return {
         "systems": system_count,
@@ -290,6 +295,7 @@ async def get_stats() -> dict:
         "rom_paths": rom_count,
         "scanned_games": scan_count,
         "last_scan": last_scan,
+        "stale_systems": stale_systems,
     }
 
 
@@ -300,8 +306,7 @@ async def prescan() -> list[dict]:
 
     results = []
     with get_session() as session:
-        dat_paths = session.exec(select(DatPath)).all()
-        rom_paths = session.exec(select(RomPath)).all()
+        dat_paths, rom_paths = _resolve_paths(session)
         systems = {s.id: s.name for s in session.exec(select(System)).all()}
 
         rom_dirs_by_system: dict[int, list[Path]] = {}
@@ -392,8 +397,7 @@ def _do_prescan(scan):
     scan.info("Starting pre-scan...")
 
     with get_session() as session:
-        dat_paths = session.exec(select(DatPath)).all()
-        rom_paths = session.exec(select(RomPath)).all()
+        dat_paths, rom_paths = _resolve_paths(session)
         systems = {s.id: s.name for s in session.exec(select(System)).all()}
 
         # Clear old prescan results and scan results
@@ -401,6 +405,14 @@ def _do_prescan(scan):
             session.delete(r)
         for r in session.exec(select(ScanResult)).all():
             session.delete(r)
+
+        # Clean up stale System rows not referenced by current config
+        config_systems = {e.system for e in load_config().rom_paths}
+        config_systems |= {e.system for e in load_config().dat_paths}
+        for sys in session.exec(select(System)).all():
+            if sys.name not in config_systems:
+                session.delete(sys)
+                scan.info(f"  Removed stale system: {sys.name}")
         session.commit()
 
         # Build DAT system name -> list of DatPath
@@ -552,14 +564,14 @@ def _do_system_scan(scan, system_name: str):
             scan.finish("")
             return
 
-        rom_paths = session.exec(select(RomPath).where(RomPath.system_id == system.id)).all()
+        all_dats, all_roms = _resolve_paths(session)
+        rom_paths = [rp for rp in all_roms if rp.system_id == system.id]
         if not rom_paths:
             scan.info("No ROM paths configured for this system")
             scan.finish("")
             return
 
         # Find matching DATs using system matcher
-        all_dats = session.exec(select(DatPath)).all()
         all_systems = {s.id: s.name for s in session.exec(select(System)).all()}
         dat_system_names = list({all_systems.get(dp.system_id, "") for dp in all_dats})
         matched_dat_system = match_system(system_name, dat_system_names)
@@ -730,11 +742,10 @@ def _do_analyze(scan, system_name: str, files: list[str]):
             scan.finish("")
             return
 
-        rom_paths_db = session.exec(select(RomPath).where(RomPath.system_id == system.id)).all()
-        rom_dirs = [Path(rp.path) for rp in rom_paths_db]
+        all_dats, all_roms = _resolve_paths(session)
+        rom_dirs = [Path(rp.path) for rp in all_roms if rp.system_id == system.id]
 
         # Find matching DATs
-        all_dats = session.exec(select(DatPath)).all()
         all_systems = {s.id: s.name for s in session.exec(select(System)).all()}
         dat_system_names = list({all_systems.get(dp.system_id, "") for dp in all_dats})
         matched_dat_system = match_system(system_name, dat_system_names)
@@ -929,7 +940,7 @@ async def get_matched_dats(system_name: str) -> list[dict]:
     from roms4me.services.system_matcher import match_system
 
     with get_session() as session:
-        all_dats = session.exec(select(DatPath)).all()
+        all_dats, _ = _resolve_paths(session)
         all_systems = {s.id: s.name for s in session.exec(select(System)).all()}
         dat_system_names = list({all_systems.get(dp.system_id, "") for dp in all_dats})
         matched = match_system(system_name, dat_system_names)
