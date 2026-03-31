@@ -556,8 +556,8 @@ a.status-badge.active { outline: 2px solid var(--pico-primary); }
     color: #c62828;
 }
 
-.plan-row-delete td {
-    color: #c62828;
+.dg-row.plan-row-delete td {
+    color: #c62828 !important;
 }
 
 /* Context menu */

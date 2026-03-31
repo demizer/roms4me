@@ -228,7 +228,7 @@ class DataGrid {
             tr.dataset.index = r;
             if (this.rowClassFn) {
                 const cls = this.rowClassFn(row);
-                if (cls) tr.classList.add(cls);
+                if (cls) tr.classList.add(...cls.split(/\s+/).filter(Boolean));
             }
             if (this.selected.has(r)) tr.classList.add("dg-selected");
 
