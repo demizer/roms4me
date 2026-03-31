@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>roms4me</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+    <link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body>
+    <!-- Toolbar -->
+    <nav id="toolbar">
+        <ul>
+            <li><strong><a href="#" id="btn-home" style="text-decoration:none;color:inherit">roms4me</a></strong></li>
+        </ul>
+        <ul>
+            <li id="scan-progress-li" hidden><a href="#" id="scan-progress-link" class="toolbar-meta">Scanning...</a></li>
+            <li id="last-scan-li"><a href="#" id="last-scan-time" class="toolbar-meta"></a></li>
+            <li><button id="btn-sync" class="outline" aria-label="Sync" title="Sync">Sync</button></li>
+            <li><button id="btn-settings" class="outline">Settings</button></li>
+        </ul>
+    </nav>
+
+    <main class="container-fluid">
+        <div id="layout">
+            <!-- Left sidebar: DAT tree -->
+            <aside id="sidebar">
+                <h6>Systems</h6>
+                <ul id="system-tree" role="list"></ul>
+            </aside>
+            <div class="resize-handle" id="resize-left"></div>
+
+            <!-- Center content -->
+            <section id="center-panel">
+                <!-- Welcome view (shown by default) -->
+                <div id="welcome-view">
+                    <div id="welcome-content"></div>
+                </div>
+
+                <!-- Scan log (shown during refresh) -->
+                <div id="scan-log-view" hidden>
+                    <h6 id="scan-log-title">Scanning ROMs...</h6>
+                    <div id="scan-log"></div>
+                </div>
+
+                <!-- Game list (shown when a system is selected) -->
+                <div id="game-list" hidden>
+                    <header id="game-list-header">
+                        <div id="game-list-info">
+                            <h6 id="game-list-title"></h6>
+                            <div id="game-list-meta"></div>
+                        </div>
+                    </header>
+                    <div id="game-toolbar">
+                        <button id="btn-analyze" class="outline" disabled>Analyze</button>
+                        <button id="btn-add-queue" class="outline" disabled>Add to Queue</button>
+                        <button id="btn-delete" class="outline" hidden>Delete</button>
+                        <div id="toolbar-spacer"></div>
+                        <div id="status-summary"></div>
+                    </div>
+                    <div id="game-grid"></div>
+                    <!-- CRC verify log split panel -->
+                    <div id="verify-panel" hidden>
+                        <div class="resize-handle-h" id="resize-verify"></div>
+                        <div id="verify-panel-header">
+                            <strong>Verification Log</strong>
+                            <button id="verify-panel-close" class="outline" aria-label="Close">&times;</button>
+                        </div>
+                        <div id="verify-log"></div>
+                    </div>
+                </div>
+            </section>
+        </div>
+    </main>
+
+    <!-- Status bar -->
+    <footer id="statusbar">
+        <small id="status-text">Ready</small>
+    </footer>
+
+    <!-- Settings modal -->
+    <div class="modal" id="settings-modal">
+        <div class="modal-backdrop"></div>
+        <div class="modal-panel large">
+            <header class="modal-header">
+                <h3>Settings</h3>
+                <button class="modal-close" aria-label="Close">&times;</button>
+            </header>
+            <div class="modal-body">
+                <h5>ROM Paths</h5>
+                <ul id="rom-paths-list" role="list"></ul>
+                <button id="btn-add-rom-path" class="outline">Add</button>
+
+                <hr>
+
+                <h5>DAT Paths</h5>
+                <ul id="dat-paths-list" role="list"></ul>
+                <button id="btn-add-dat-path" class="outline">Add</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add path modal -->
+    <div class="modal" id="addpath-modal">
+        <div class="modal-backdrop"></div>
+        <div class="modal-panel">
+            <header class="modal-header">
+                <h3 id="addpath-title">Add Path</h3>
+                <button class="modal-close" aria-label="Close">&times;</button>
+            </header>
+            <div class="modal-body">
+                <form id="addpath-form">
+                    <label for="addpath-path">Directory:</label>
+                    <input type="text" id="addpath-path" name="path" placeholder="/path/to/directory" required>
+                    <button type="submit">Add</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Confirm prescan modal -->
+    <div class="modal" id="confirm-sync-modal">
+        <div class="modal-backdrop"></div>
+        <div class="modal-panel">
+            <header class="modal-header">
+                <h3>New DATs Added</h3>
+                <button class="modal-close" aria-label="Close">&times;</button>
+            </header>
+            <div class="modal-body">
+                <p>Run a pre-scan now to match DATs with your ROM collections?</p>
+                <div style="display:flex;gap:0.5rem;justify-content:flex-end">
+                    <button id="confirm-sync-no" class="outline">Not Now</button>
+                    <button id="confirm-sync-yes">Sync Now</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/modal.js"></script>
+    <script src="/static/js/resize.js"></script>
+    <script src="/static/js/datagrid.js"></script>
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
