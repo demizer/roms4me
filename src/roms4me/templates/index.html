@@ -87,16 +87,42 @@
                 <h3>Settings</h3>
                 <button class="modal-close" aria-label="Close">&times;</button>
             </header>
-            <div class="modal-body">
-                <h5>ROM Paths</h5>
-                <ul id="rom-paths-list" role="list"></ul>
-                <button id="btn-add-rom-path" class="outline">Add</button>
-
-                <hr>
-
-                <h5>DAT Paths</h5>
-                <ul id="dat-paths-list" role="list"></ul>
-                <button id="btn-add-dat-path" class="outline">Add</button>
+            <div class="modal-body settings-layout">
+                <div class="settings-nav">
+                    <div class="settings-nav-item active" data-panel="general">&#9881; General</div>
+                    <div class="settings-nav-item" data-panel="roms">&#128190; ROMs</div>
+                    <div class="settings-nav-item" data-panel="dats">&#128196; DATs</div>
+                    <div class="settings-nav-item" data-panel="saves">&#128190; Saves</div>
+                </div>
+                <div class="settings-content">
+                    <div class="settings-panel active" id="settings-general">
+                        <h5>Theme</h5>
+                        <fieldset id="theme-fieldset">
+                            <label><input type="radio" name="theme" value="light"> Light</label>
+                            <label><input type="radio" name="theme" value="dark"> Dark</label>
+                            <label><input type="radio" name="theme" value="auto"> Auto (system)</label>
+                        </fieldset>
+                        <hr>
+                        <h5>Config File</h5>
+                        <p><a href="#" class="path-link" id="config-path-link"></a></p>
+                    </div>
+                    <div class="settings-panel" id="settings-roms">
+                        <h5>ROM Paths</h5>
+                        <ul id="rom-paths-list" role="list"></ul>
+                        <button id="btn-add-rom-path" class="outline">Add</button>
+                    </div>
+                    <div class="settings-panel" id="settings-dats">
+                        <h5>DAT Paths</h5>
+                        <ul id="dat-paths-list" role="list"></ul>
+                        <button id="btn-add-dat-path" class="outline">Add</button>
+                    </div>
+                    <div class="settings-panel" id="settings-saves">
+                        <h5>Saves Directory</h5>
+                        <p>Directory where save files (.srm, .sav) will be moved during analysis.</p>
+                        <input type="text" id="saves-path-input" placeholder="/path/to/saves">
+                        <button id="btn-save-saves-path" class="outline">Save</button>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -137,9 +163,9 @@
         </div>
     </div>
 
-    <script src="/static/js/modal.js"></script>
-    <script src="/static/js/resize.js"></script>
-    <script src="/static/js/datagrid.js"></script>
-    <script src="/static/js/app.js"></script>
+    <script src="/static/js/modal.js?v=2"></script>
+    <script src="/static/js/resize.js?v=2"></script>
+    <script src="/static/js/datagrid.js?v=2"></script>
+    <script src="/static/js/app.js?v=2"></script>
 </body>
 </html>

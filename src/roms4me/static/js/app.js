@@ -85,9 +85,8 @@ async function loadWelcome() {
                 "<h4>Welcome to roms4me</h4>" +
                 "<p>Get started by adding your DAT and ROM directories in Settings.</p>" +
                 '<button id="welcome-settings" class="outline">Open Settings</button>';
-            document.getElementById("welcome-settings").addEventListener("click", async () => {
-                await loadSettingsPaths();
-                Modal.open("settings-modal");
+            document.getElementById("welcome-settings").addEventListener("click", () => {
+                document.getElementById("btn-settings").click();
             });
         } else {
             let html = "<h4>roms4me</h4>" +
@@ -106,6 +105,12 @@ async function loadWelcome() {
         }
 
         updateLastScanTime(stats.last_scan);
+
+        // Notify about stale scan data
+        if (stats.stale_systems && stats.stale_systems.length > 0) {
+            const n = stats.stale_systems.length;
+            setStatus(n + " system(s) have results from removed paths \u2014 Sync to clean up");
+        }
     } catch (e) {
         setStatus("Error loading stats: " + e.message);
     }
@@ -622,7 +627,20 @@ let addpathMode = "dat";
 
 document.getElementById("btn-settings").addEventListener("click", async () => {
     await loadSettingsPaths();
+    await loadSettingsGeneral();
+    await loadSettingsSaves();
     Modal.open("settings-modal");
+});
+
+// Settings tab navigation
+document.querySelectorAll(".settings-nav-item").forEach((item) => {
+    item.addEventListener("click", () => {
+        document.querySelectorAll(".settings-nav-item").forEach((el) => el.classList.remove("active"));
+        document.querySelectorAll(".settings-panel").forEach((el) => el.classList.remove("active"));
+        item.classList.add("active");
+        const panel = document.getElementById("settings-" + item.dataset.panel);
+        if (panel) panel.classList.add("active");
+    });
 });
 
 // Refresh welcome stats when settings closes
@@ -632,6 +650,84 @@ new MutationObserver(() => {
         loadWelcome();
     }
 }).observe(settingsEl, { attributes: true, attributeFilter: ["class"] });
+
+// --- Theme ---
+
+function applyTheme(theme) {
+    if (theme === "auto") {
+        const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+        document.documentElement.dataset.theme = dark ? "dark" : "light";
+    } else {
+        document.documentElement.dataset.theme = theme;
+    }
+}
+
+// Listen for OS theme changes when in auto mode
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", async () => {
+    try {
+        const { theme } = await fetchJson("/api/config/theme");
+        if (theme === "auto") applyTheme("auto");
+    } catch (_) {}
+});
+
+// Load and apply theme on page load
+(async () => {
+    try {
+        const { theme } = await fetchJson("/api/config/theme");
+        applyTheme(theme);
+    } catch (_) {}
+})();
+
+async function loadSettingsGeneral() {
+    try {
+        const { theme } = await fetchJson("/api/config/theme");
+        const radio = document.querySelector('input[name="theme"][value="' + theme + '"]');
+        if (radio) radio.checked = true;
+    } catch (_) {}
+    try {
+        const { path } = await fetchJson("/api/config/path");
+        const link = document.getElementById("config-path-link");
+        if (link) {
+            link.textContent = path;
+            link.dataset.path = path;
+        }
+    } catch (_) {}
+}
+
+document.getElementById("theme-fieldset").addEventListener("change", async (e) => {
+    const theme = e.target.value;
+    try {
+        await fetchJson("/api/config/theme", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ theme }),
+        });
+        applyTheme(theme);
+    } catch (_) {}
+});
+
+// --- Saves path ---
+
+async function loadSettingsSaves() {
+    try {
+        const { path } = await fetchJson("/api/config/saves-path");
+        document.getElementById("saves-path-input").value = path || "";
+    } catch (_) {}
+}
+
+document.getElementById("btn-save-saves-path").addEventListener("click", async () => {
+    const path = document.getElementById("saves-path-input").value.trim();
+    try {
+        await fetchJson("/api/config/saves-path", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ path }),
+        });
+        setStatus("Saves path updated");
+    } catch (e) {
+        setStatus("Error: " + e.message);
+    }
+});
 
 document.getElementById("btn-add-dat-path").addEventListener("click", () => {
     addpathMode = "dat";
@@ -702,7 +798,11 @@ async function loadSettingsPaths() {
             btn.classList.add("outline", "secondary");
             btn.textContent = "Remove";
             btn.addEventListener("click", async () => {
-                await fetchJson("/api/dats/paths/" + dp.id, { method: "DELETE" });
+                await fetchJson("/api/dats/paths", {
+                    method: "DELETE",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ path: dp.path, system: dp.system }),
+                });
                 await loadSettingsPaths();
             });
             li.appendChild(btn);
@@ -730,7 +830,11 @@ async function loadSettingsPaths() {
             btn.classList.add("outline", "secondary");
             btn.textContent = "Remove";
             btn.addEventListener("click", async () => {
-                await fetchJson("/api/roms/paths/" + rp.id, { method: "DELETE" });
+                await fetchJson("/api/roms/paths", {
+                    method: "DELETE",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ path: rp.path, system: rp.system }),
+                });
                 await loadSettingsPaths();
             });
             li.appendChild(btn);

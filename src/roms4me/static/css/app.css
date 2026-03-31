@@ -709,6 +709,13 @@ a.status-badge.active { outline: 2px solid var(--pico-primary); }
     max-width: 90vw;
     height: 90vh;
     max-height: 90vh;
+    display: flex;
+    flex-direction: column;
+}
+
+.modal-panel.large .modal-body {
+    flex: 1;
+    overflow: hidden;
 }
 
 .modal-header {
@@ -743,7 +750,66 @@ a.status-badge.active { outline: 2px solid var(--pico-primary); }
     pointer-events: auto;
 }
 
-/* ---- Settings-specific ---- */
+/* ---- Settings layout ---- */
+.settings-layout {
+    display: flex !important;
+    flex-direction: row !important;
+    height: 100%;
+    gap: 1rem;
+}
+
+.settings-nav {
+    flex: 0 0 160px;
+    min-width: 160px;
+    max-width: 160px;
+    border-right: 1px solid var(--pico-muted-border-color);
+    padding-right: 1rem;
+}
+
+.settings-nav-item {
+    padding: 0.5rem 0.75rem;
+    cursor: pointer;
+    border-radius: 4px;
+    white-space: nowrap;
+    margin-bottom: 0.25rem;
+    font-size: 0.9rem;
+}
+
+.settings-nav-item.active {
+    background: var(--pico-primary-background);
+    color: var(--pico-primary-inverse);
+}
+
+.settings-nav-item:hover:not(.active) {
+    background: var(--pico-primary-focus);
+}
+
+.settings-content {
+    flex: 1;
+    overflow-y: auto;
+    min-width: 0;
+}
+
+.settings-panel {
+    display: none;
+}
+
+.settings-panel.active {
+    display: block;
+}
+
+#theme-fieldset {
+    border: none;
+    padding: 0;
+}
+
+#theme-fieldset label {
+    display: block;
+    padding: 0.25rem 0;
+    cursor: pointer;
+}
+
+/* ---- Settings path lists ---- */
 #dat-paths-list,
 #rom-paths-list {
     padding-left: 0;
