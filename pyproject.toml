@@ -13,6 +13,7 @@ dependencies = [
     "python-multipart",
     "rich>=14.3.3",
     "sqlmodel>=0.0.37",
+    "tomli-w>=1.0.0",
     "uvicorn[standard]",
 ]
 

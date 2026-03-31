@@ -1,0 +1,110 @@
+"""TOML-based configuration for roms4me.
+
+All user settings (theme, paths, saves) are stored in a TOML config file
+at the platform-appropriate config directory.
+"""
+
+import logging
+import threading
+import tomllib
+
+import tomli_w
+from pydantic import BaseModel
+
+from roms4me.core.paths import get_config_path
+
+log = logging.getLogger(__name__)
+
+_lock = threading.Lock()
+
+
+class PathEntry(BaseModel):
+    """A configured directory path with its associated system name."""
+
+    path: str
+    system: str
+
+
+class AppConfig(BaseModel):
+    """Application configuration stored in config.toml."""
+
+    theme: str = "auto"  # "light" | "dark" | "auto"
+    saves_path: str = ""
+    rom_paths: list[PathEntry] = []
+    dat_paths: list[PathEntry] = []
+
+
+def load_config() -> AppConfig:
+    """Load config from TOML file. Creates default if file doesn't exist."""
+    path = get_config_path()
+    if not path.exists():
+        config = AppConfig()
+        save_config(config)
+        return config
+    try:
+        with open(path, "rb") as f:
+            data = tomllib.load(f)
+        return AppConfig(**data)
+    except Exception as e:
+        log.warning("Failed to load config from %s: %s", path, e)
+        return AppConfig()
+
+
+def save_config(config: AppConfig) -> None:
+    """Save config to TOML file (thread-safe)."""
+    path = get_config_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = config.model_dump()
+    with _lock:
+        with open(path, "wb") as f:
+            tomli_w.dump(data, f)
+
+
+def add_rom_path(path: str, system: str) -> None:
+    """Add a ROM path entry to the config."""
+    config = load_config()
+    entry = PathEntry(path=path, system=system)
+    if entry not in config.rom_paths:
+        config.rom_paths.append(entry)
+        save_config(config)
+
+
+def remove_rom_path(path: str, system: str) -> None:
+    """Remove a ROM path entry from the config."""
+    config = load_config()
+    entry = PathEntry(path=path, system=system)
+    if entry in config.rom_paths:
+        config.rom_paths.remove(entry)
+        save_config(config)
+
+
+def add_dat_path(path: str, system: str) -> None:
+    """Add a DAT path entry to the config."""
+    config = load_config()
+    entry = PathEntry(path=path, system=system)
+    if entry not in config.dat_paths:
+        config.dat_paths.append(entry)
+        save_config(config)
+
+
+def remove_dat_path(path: str, system: str) -> None:
+    """Remove a DAT path entry from the config."""
+    config = load_config()
+    entry = PathEntry(path=path, system=system)
+    if entry in config.dat_paths:
+        config.dat_paths.remove(entry)
+        save_config(config)
+
+
+def set_theme(theme: str) -> None:
+    """Set the theme preference."""
+    config = load_config()
+    config.theme = theme
+    save_config(config)
+
+
+def set_saves_path(path: str) -> None:
+    """Set the saves directory path."""
+    config = load_config()
+    config.saves_path = path
+    save_config(config)
