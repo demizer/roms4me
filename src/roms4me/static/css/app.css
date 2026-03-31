@@ -7,6 +7,13 @@
     --status-mismatch: #ffe0b2;
 }
 
+[data-theme="dark"] {
+    --status-ok: #1b3a1b;
+    --status-missing: #3a1b1b;
+    --status-bad: #3a3a1b;
+    --status-mismatch: #3a2a1b;
+}
+
 body {
     display: flex;
     flex-direction: column;
@@ -174,13 +181,13 @@ main.container-fluid {
     font-weight: bold;
 }
 
-.status-badge.ok { background: var(--status-ok); color: #2e7d32; }
-.status-badge.unverified { background: #bbdefb; color: #1565c0; }
-.status-badge.missing { background: var(--status-missing); color: #c62828; }
-.status-badge.bad { background: var(--status-bad); color: #f9a825; }
-.status-badge.mismatch { background: var(--status-mismatch); color: #e65100; }
-.status-badge.unmatched { background: #fff3e0; color: #e65100; }
-.status-badge.missing-count { background: #eee; color: #999; }
+.status-badge.ok { background: var(--status-ok); color: #4caf50; }
+.status-badge.unverified { background: var(--pico-primary-background); color: var(--pico-primary-inverse); }
+.status-badge.missing { background: var(--status-missing); color: #ef5350; }
+.status-badge.bad { background: var(--status-bad); color: #fbc02d; }
+.status-badge.mismatch { background: var(--status-mismatch); color: #ff7043; }
+.status-badge.unmatched { background: var(--status-mismatch); color: #ff7043; }
+.status-badge.missing-count { background: var(--pico-muted-border-color); color: var(--pico-muted-color); }
 
 a.status-badge { text-decoration: none; cursor: pointer; }
 a.status-badge:hover { filter: brightness(0.9); }
@@ -412,7 +419,7 @@ a.status-badge.active { outline: 2px solid var(--pico-primary); }
     user-select: none;
     background: var(--pico-card-background-color, #fff) !important;
     border-bottom: 2px solid var(--pico-muted-border-color) !important;
-    border-right: 1px solid #ccc !important;
+    border-right: 1px solid var(--pico-muted-border-color) !important;
     position: relative;
 }
 
@@ -479,7 +486,7 @@ a.status-badge.active { outline: 2px solid var(--pico-primary); }
     overflow: hidden !important;
     text-overflow: ellipsis;
     max-width: 0;
-    border-right: 1px solid #ccc !important;
+    border-right: 1px solid var(--pico-muted-border-color) !important;
 }
 
 .dg-td:last-child {
@@ -528,10 +535,10 @@ a.status-badge.active { outline: 2px solid var(--pico-primary); }
 .dg-row.status-bad_dump td { background: var(--status-bad) !important; }
 .dg-row.status-checksum_mismatch td,
 .dg-row.status-size_mismatch td { background: var(--status-mismatch) !important; }
-.dg-row.status-not_needed td { background: #e0e0e0 !important; }
-.dg-row.status-unverified td { background: #f5f5f5 !important; color: #333; }
-.dg-row.status-unmatched td { background: #fff8e1 !important; color: #e65100; }
-.dg-row.status-matched td { background: #e8f5e9 !important; color: #2e7d32; }
+.dg-row.status-not_needed td { background: var(--pico-muted-border-color) !important; }
+.dg-row.status-unverified td { background: var(--pico-card-background-color) !important; }
+.dg-row.status-unmatched td { background: var(--status-mismatch) !important; }
+.dg-row.status-matched td { background: var(--status-ok) !important; }
 
 /* Plan column links */
 .plan-link {
