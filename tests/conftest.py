@@ -85,11 +85,13 @@ def _app_server(_test_data_dir):
     # Override data dir to use temp
     os.environ["ROMS4ME_DATA_DIR"] = str(_test_data_dir / "appdata")
 
-    # Patch get_data_dir to use our temp dir
+    # Patch get_data_dir and get_config_path to use temp dir
     import roms4me.core.paths as paths_mod
 
     original_get_data_dir = paths_mod.get_data_dir
+    original_get_config_path = paths_mod.get_config_path
     paths_mod.get_data_dir = lambda: _test_data_dir / "appdata"
+    paths_mod.get_config_path = lambda: _test_data_dir / "appdata" / "config.toml"
 
     from roms4me.app import create_app
 
@@ -119,6 +121,7 @@ def _app_server(_test_data_dir):
 
     server.should_exit = True
     paths_mod.get_data_dir = original_get_data_dir
+    paths_mod.get_config_path = original_get_config_path
 
 
 @pytest.fixture(scope="session")

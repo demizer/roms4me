@@ -12,14 +12,18 @@ def _setup_system(page: Page, app: dict):
     page.click("#btn-settings")
     page.wait_for_selector("#settings-modal.is-open")
 
-    # Add ROM path
+    # Navigate to ROMs tab and add ROM path
+    page.click(".settings-nav-item[data-panel='roms']")
+    page.wait_for_selector("#settings-roms.active")
     page.click("#btn-add-rom-path")
     page.wait_for_selector("#addpath-modal.is-open")
     page.fill("#addpath-path", str(app["rom_root"]))
     page.click("#addpath-form button[type=submit]")
     page.wait_for_timeout(500)
 
-    # Add DAT path
+    # Navigate to DATs tab and add DAT path
+    page.click(".settings-nav-item[data-panel='dats']")
+    page.wait_for_selector("#settings-dats.active")
     page.click("#btn-add-dat-path")
     page.wait_for_selector("#addpath-modal.is-open")
     page.fill("#addpath-path", str(app["dat_dir"]))
@@ -286,3 +290,122 @@ class TestAnalysisFilterFocus:
                 assert not item["checked"], "Status 'missing' should not be checked after analysis"
             else:
                 assert item["checked"], f"Status '{item['text']}' should be checked after analysis"
+
+
+class TestStaleDataNotification:
+    """Test that stale DB data triggers a status bar notification."""
+
+    def test_stale_systems_shown_after_config_cleared(self, page, app):
+        """After setting up a system and clearing config, status bar should warn about stale data."""
+        _setup_system(page, app)
+
+        # We now have scan results in the DB. Clear the config paths.
+        import json
+        import urllib.request
+
+        base = app["url"]
+
+        # Get current ROM paths and remove them all
+        req = urllib.request.Request(base + "/api/roms/paths")
+        with urllib.request.urlopen(req) as resp:
+            rom_paths = json.loads(resp.read())
+        for rp in rom_paths:
+            data = json.dumps({"path": rp["path"], "system": rp["system"]}).encode()
+            req = urllib.request.Request(
+                base + "/api/roms/paths",
+                data=data,
+                headers={"Content-Type": "application/json"},
+                method="DELETE",
+            )
+            urllib.request.urlopen(req)
+
+        # Reload page — should show stale data warning
+        page.reload()
+        page.wait_for_load_state("networkidle")
+        page.wait_for_timeout(1000)
+
+        status_text = page.locator("#status-text").inner_text()
+        assert "removed paths" in status_text.lower() or "stale" in status_text.lower(), \
+            f"Expected stale data warning, got: {status_text}"
+
+
+class TestSettingsPanel:
+    """Test settings panel behavior."""
+
+    def test_theme_radio_defaults_to_auto_toolbar(self, page, app):
+        """Opening settings via toolbar should show 'auto' theme selected."""
+        page.click("#btn-settings")
+        page.wait_for_selector("#settings-modal.is-open")
+        page.wait_for_timeout(500)
+
+        auto_radio = page.locator('input[name="theme"][value="auto"]')
+        assert auto_radio.is_checked(), "Auto theme radio should be checked by default"
+
+    def test_theme_radio_defaults_to_auto_welcome(self, page, app):
+        """Opening settings via welcome page should show 'auto' theme selected."""
+        # Welcome page is shown on fresh start with no paths configured
+        welcome_btn = page.locator("#welcome-settings")
+        if welcome_btn.is_visible():
+            welcome_btn.click()
+        else:
+            page.click("#btn-settings")
+        page.wait_for_selector("#settings-modal.is-open")
+        page.wait_for_timeout(500)
+
+        auto_radio = page.locator('input[name="theme"][value="auto"]')
+        assert auto_radio.is_checked(), "Auto theme radio should be checked via welcome button"
+
+    def test_config_path_shown_in_general_panel(self, page, app):
+        """General settings panel should display the config file path."""
+        page.click("#btn-settings")
+        page.wait_for_selector("#settings-modal.is-open")
+        page.wait_for_timeout(500)
+
+        link = page.locator("#config-path-link")
+        path_text = link.inner_text()
+        assert "config.toml" in path_text, f"Expected config.toml path, got: {path_text}"
+
+    def test_stale_warning_after_paths_removed(self, page, app):
+        """Status bar should warn about stale data when config paths are removed but DB has results."""
+        _setup_system(page, app)
+
+        # Remove all ROM paths via API
+        import json
+        import urllib.request
+
+        base = app["url"]
+        req = urllib.request.Request(base + "/api/roms/paths")
+        with urllib.request.urlopen(req) as resp:
+            rom_paths = json.loads(resp.read())
+        for rp in rom_paths:
+            data = json.dumps({"path": rp["path"], "system": rp["system"]}).encode()
+            req = urllib.request.Request(
+                base + "/api/roms/paths",
+                data=data,
+                headers={"Content-Type": "application/json"},
+                method="DELETE",
+            )
+            urllib.request.urlopen(req)
+
+        # Remove all DAT paths via API
+        req = urllib.request.Request(base + "/api/dats/paths")
+        with urllib.request.urlopen(req) as resp:
+            dat_paths = json.loads(resp.read())
+        for dp in dat_paths:
+            data = json.dumps({"path": dp["path"], "system": dp["system"]}).encode()
+            req = urllib.request.Request(
+                base + "/api/dats/paths",
+                data=data,
+                headers={"Content-Type": "application/json"},
+                method="DELETE",
+            )
+            urllib.request.urlopen(req)
+
+        # Reload and check status bar
+        page.reload()
+        page.wait_for_load_state("networkidle")
+        page.wait_for_timeout(1000)
+
+        status_text = page.locator("#status-text").inner_text()
+        assert "removed paths" in status_text.lower(), \
+            f"Expected stale data warning, got: {status_text}"
