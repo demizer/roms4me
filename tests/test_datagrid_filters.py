@@ -243,3 +243,46 @@ class TestCrossColumnFilters:
         warn = page.locator(".dg-filter-warn")
         expect(warn).to_be_visible()
         expect(warn).to_contain_text("Additional filters applied: Status")
+
+
+class TestAnalysisFilterFocus:
+    """Test that analysis applies a focused filter on completion."""
+
+    def test_analysis_filters_to_analyzed_game(self, page, app):
+        """After analyzing a ROM, grid should filter to show only the analyzed game with all statuses."""
+        _setup_system(page, app)
+
+        # Remember total visible rows before analysis
+        total_before = _get_visible_row_count(page)
+        assert total_before == 5  # 5 owned games
+
+        # Click the first row to select it
+        first_row = page.locator(".dg-row").first
+        game_name = first_row.locator(".dg-td").nth(1).inner_text().strip()
+        first_row.click()
+        page.wait_for_timeout(200)
+
+        # Click Analyze
+        page.click("#btn-analyze")
+        # Wait for analysis to complete
+        page.wait_for_selector("#verify-log:has-text('Analysis complete')", timeout=15000)
+        page.wait_for_timeout(500)
+
+        # Grid should now be filtered to only the analyzed game
+        visible_after = _get_visible_row_count(page)
+        assert visible_after < total_before, "Grid should be filtered to fewer rows after analysis"
+        assert visible_after >= 1, "At least the analyzed game should be visible"
+
+        # All visible rows should have the analyzed game's name
+        for row in page.locator(".dg-row").all():
+            row_game = row.locator(".dg-td").nth(1).inner_text().strip()
+            assert row_game == game_name, f"Expected '{game_name}', got '{row_game}'"
+
+        # Status filter should show all owned statuses but not "missing"
+        _open_status_filter(page)
+        items = _get_filter_items(page)
+        for item in items:
+            if item["text"] == "missing":
+                assert not item["checked"], "Status 'missing' should not be checked after analysis"
+            else:
+                assert item["checked"], f"Status '{item['text']}' should be checked after analysis"

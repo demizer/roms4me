@@ -335,10 +335,27 @@ async function startAnalysis(systemName) {
                 clearInterval(pollInterval);
                 analyzeBtn.disabled = false;
 
-                // Reload table data, preserving existing filters
+                // Reload table data
                 const resultData = await fetchJson("/api/results/" + encodeURIComponent(systemName) + "?view=all");
                 gameGrid.allData = resultData.rows;
-                gameGrid.refresh();
+
+                // Focus on analyzed ROMs: filter Game column to show
+                // analyzed rows and any related rows (same game name),
+                // with all statuses visible so nothing is hidden
+                const analyzedFiles = new Set(files);
+                const analyzedNames = new Set();
+                for (const r of resultData.rows) {
+                    if (analyzedFiles.has(r.file_name)) {
+                        analyzedNames.add(String(r.description ?? ""));
+                    }
+                }
+                if (analyzedNames.size > 0) {
+                    gameGrid.filters = {};
+                    gameGrid.setFilter("status", new Set(["ok", "unverified", "unmatched", "matched", "duplicate"]));
+                    gameGrid.setFilter("description", analyzedNames);
+                } else {
+                    gameGrid.refresh();
+                }
 
                 // Update badges
                 const summaryEl = document.getElementById("status-summary");
