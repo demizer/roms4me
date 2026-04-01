@@ -524,9 +524,12 @@ a.status-badge.active { outline: 2px solid var(--pico-primary); }
     filter: brightness(0.95);
 }
 
-.dg-selected {
-    outline: 2px solid var(--pico-primary);
-    outline-offset: -2px;
+tr.dg-row.dg-selected td {
+    filter: brightness(1.3);
+}
+
+[data-theme="dark"] tr.dg-row.dg-selected td {
+    filter: brightness(1.5);
 }
 
 /* Row status colors — target td to override PicoCSS */
