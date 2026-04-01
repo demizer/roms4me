@@ -3,6 +3,11 @@ let currentSystem = null;
 
 const statusText = document.getElementById("status-text");
 
+// --- Queue ---
+
+/** @type {Array<{system: string, file_name: string, game_name: string, plan: string, note: string}>} */
+const exportQueue = [];
+
 // --- API helpers ---
 
 async function fetchJson(url, opts = {}) {
@@ -236,6 +241,10 @@ async function selectSystem(systemName) {
 
         // Wire up analyze button
         analyzeBtn.onclick = () => startAnalysis(systemName);
+        exportBtn.onclick = () => {
+            const rows = gameGrid.getSelectedRows();
+            if (rows.length > 0) addToQueue(rows);
+        };
         deleteBtn.onclick = () => {
             const rows = gameGrid.getSelectedRows();
             if (rows.length > 0) setRowPlan(rows, "delete");
@@ -433,6 +442,123 @@ async function setRowPlan(rows, plan) {
     }
 }
 
+// --- Queue functions ---
+
+function addToQueue(rows) {
+    /** Add selected rows to the export queue. */
+    let added = 0;
+    for (const row of rows) {
+        if (!row.file_name) continue;
+        // Avoid duplicates by file_name + system
+        const exists = exportQueue.some(
+            (q) => q.file_name === row.file_name && q.system === currentSystem
+        );
+        if (!exists) {
+            exportQueue.push({
+                system: currentSystem,
+                file_name: row.file_name,
+                game_name: row.game_name || row.description || "",
+                plan: row.plan || "",
+                note: row.note || "",
+            });
+            added++;
+        }
+    }
+    updateQueueButton();
+    if (added > 0) {
+        setStatus("Added " + added + " item(s) to queue (" + exportQueue.length + " total)");
+    } else {
+        setStatus("Items already in queue");
+    }
+}
+
+function updateQueueButton() {
+    /** Show/hide the queue toolbar button with count badge. */
+    const btn = document.getElementById("btn-queue");
+    if (exportQueue.length > 0) {
+        btn.hidden = false;
+        btn.textContent = "Queue (" + exportQueue.length + ")";
+    } else {
+        btn.hidden = true;
+        btn.textContent = "Queue";
+    }
+}
+
+function showQueue() {
+    /** Show the queue in the verify panel. */
+    const verifyPanel = document.getElementById("verify-panel");
+    const verifyLog = document.getElementById("verify-log");
+    const header = verifyPanel.querySelector("#verify-panel-header strong");
+    verifyPanel.hidden = false;
+    verifyLog.innerHTML = "";
+    header.textContent = "Export Queue (" + exportQueue.length + " items)";
+    Resize.initVertical("resize-verify", "verify-panel");
+
+    if (exportQueue.length === 0) {
+        appendScanLogLine(verifyLog, "Queue is empty");
+        return;
+    }
+
+    // Group by system
+    const bySystem = {};
+    for (const item of exportQueue) {
+        bySystem[item.system] = bySystem[item.system] || [];
+        bySystem[item.system].push(item);
+    }
+
+    for (const [system, items] of Object.entries(bySystem)) {
+        appendScanLogLine(verifyLog, "[blue]" + system + " (" + items.length + " items)");
+        for (const item of items) {
+            const plan = item.plan ? " [" + item.plan + "]" : "";
+            appendScanLogLine(verifyLog, "  " + item.game_name + plan);
+        }
+    }
+
+    // Add process and clear buttons
+    const btnRow = document.createElement("div");
+    btnRow.style.cssText = "display:flex;gap:0.5rem;padding:0.5rem;";
+    const processBtn = document.createElement("button");
+    processBtn.className = "outline";
+    processBtn.textContent = "Process Queue";
+    processBtn.style.cssText = "font-size:0.8rem;padding:0.25rem 0.75rem;margin:0;";
+    processBtn.addEventListener("click", () => processQueue());
+    const clearBtn = document.createElement("button");
+    clearBtn.className = "outline secondary";
+    clearBtn.textContent = "Clear Queue";
+    clearBtn.style.cssText = "font-size:0.8rem;padding:0.25rem 0.75rem;margin:0;";
+    clearBtn.addEventListener("click", () => {
+        exportQueue.length = 0;
+        updateQueueButton();
+        showQueue();
+    });
+    btnRow.appendChild(processBtn);
+    btnRow.appendChild(clearBtn);
+    verifyLog.appendChild(btnRow);
+}
+
+async function processQueue() {
+    /** Process the export queue — placeholder for actual export logic. */
+    const verifyLog = document.getElementById("verify-log");
+    verifyLog.innerHTML = "";
+    appendScanLogLine(verifyLog, "[blue]Processing " + exportQueue.length + " item(s)...");
+
+    for (let i = 0; i < exportQueue.length; i++) {
+        const item = exportQueue[i];
+        appendScanLogLine(verifyLog, "[" + (i + 1) + "/" + exportQueue.length + "] " + item.game_name);
+        appendScanLogLine(verifyLog, "  System: " + item.system);
+        if (item.plan) appendScanLogLine(verifyLog, "  Plan: " + item.plan);
+        // TODO: call export API when implemented
+        appendScanLogLine(verifyLog, "  [yellow]Export not yet implemented");
+    }
+
+    appendScanLogLine(verifyLog, "[green]Queue processing complete");
+    exportQueue.length = 0;
+    updateQueueButton();
+}
+
+// Queue toolbar button
+document.getElementById("btn-queue").addEventListener("click", () => showQueue());
+
 function showExportPlan(row) {
     /** Show the export plan for a ROM in the verify log panel. */
     const verifyPanel = document.getElementById("verify-panel");
@@ -491,6 +617,10 @@ const gameGrid = new DataGrid("game-grid", {
     },
     onContextMenu: (rows) => {
         const items = [];
+        items.push({
+            label: "Add to Queue",
+            action: (rows) => addToQueue(rows),
+        });
         items.push({
             label: "Delete",
             action: (rows) => setRowPlan(rows, "delete"),

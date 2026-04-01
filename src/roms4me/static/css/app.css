@@ -266,6 +266,11 @@ a.status-badge.active { outline: 2px solid var(--pico-primary); }
     --pico-border-color: #c62828;
 }
 
+#btn-queue {
+    --pico-color: #1565c0;
+    --pico-border-color: #1565c0;
+}
+
 #toolbar-spacer {
     flex: 1;
 }
