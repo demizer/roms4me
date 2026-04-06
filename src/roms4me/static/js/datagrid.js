@@ -22,7 +22,7 @@ class DataGrid {
         this.sortCol = null;
         this.sortDir = "asc";
         this.filters = {};       // key -> Set of allowed values (null = no filter)
-        this.filterSearchText = {}; // key -> last search text in filter dialog
+        this.filterText = {};    // key -> substring search string (live text filter)
         this.selected = new Set();
         this.lastClickedIdx = null;
         this.onSelectionChange = null;
@@ -459,7 +459,7 @@ class DataGrid {
         search.type = "text";
         search.placeholder = "Search...";
         search.className = "dg-filter-search";
-        search.value = this.filterSearchText[col.key] || "";
+        search.value = this.filterText[col.key] || "";
         dialog.appendChild(search);
 
         // Select all / none
@@ -524,8 +524,10 @@ class DataGrid {
         renderList();
 
         search.addEventListener("input", () => {
-            grid.filterSearchText[col.key] = search.value;
+            grid.filterText[col.key] = search.value;
             renderList();
+            grid._updateFilterUI();
+            grid._applyFiltersAndSort();
         });
 
         /** Get the values currently visible in the checkbox list. */
@@ -560,6 +562,13 @@ class DataGrid {
         setTimeout(() => document.addEventListener("click", this._filterClickAway), 0);
 
         this.wrapperEl.appendChild(dialog);
+
+        // Clamp left so dialog doesn't overflow the viewport right edge
+        const dr = dialog.getBoundingClientRect();
+        if (dr.right > window.innerWidth - 8) {
+            dialog.style.left = Math.max(0, (rect.left - wrapRect.left) - (dr.right - window.innerWidth + 8)) + "px";
+        }
+
         search.focus();
     }
 
@@ -579,7 +588,8 @@ class DataGrid {
         /** Show/hide filter indicator dots on headers. */
         this.columns.forEach((col) => {
             if (col._filterDotEl) {
-                col._filterDotEl.textContent = this.filters[col.key] ? " \u25CF" : "";
+                const active = this.filters[col.key] || (this.filterText[col.key] || "").trim();
+                col._filterDotEl.textContent = active ? " \u25CF" : "";
             }
         });
     }
@@ -599,6 +609,13 @@ class DataGrid {
                     return this.filters[key].has(val);
                 });
             });
+        }
+
+        // Text search filters (live substring match)
+        for (const [key, text] of Object.entries(this.filterText)) {
+            const ft = (text || "").trim().toLowerCase();
+            if (!ft) continue;
+            data = data.filter((row) => String(row[key] ?? "").toLowerCase().includes(ft));
         }
 
         // Sort

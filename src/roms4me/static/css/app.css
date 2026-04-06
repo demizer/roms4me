@@ -607,7 +607,7 @@ tr.dg-row.dg-selected td {
     display: flex;
     flex-direction: column;
     gap: 0.4rem;
-    max-width: 350px;
+    width: max-content;
 }
 
 .dg-filter-warn {
