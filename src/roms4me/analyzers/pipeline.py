@@ -11,6 +11,7 @@ import zlib
 from pathlib import Path
 
 from roms4me.analyzers.base import AnalysisResult, Suggestion
+from roms4me.handlers.registry import get_rom_extensions
 from roms4me.analyzers.crc_lookup import CrcLookupAnalyzer
 from roms4me.analyzers.header_strip import HeaderStripAnalyzer
 from roms4me.analyzers.n64_byteorder import N64ByteOrderAnalyzer
@@ -52,6 +53,34 @@ def analyze_rom(
     rom_stem = rom_path.stem
     seen_games: set[str] = set()
 
+    # Accepted ROM extensions for this system (used throughout the pipeline)
+    accepted_exts: set[str] | None = set(get_rom_extensions(dat.name)) or None
+
+    # Detect inner ROM type for archives and check format vs DAT
+    if rom_path.suffix.lower() == ".zip":
+        try:
+            with zipfile.ZipFile(rom_path) as _zf:
+                _entries = [e for e in _zf.infolist() if not e.is_dir()]
+                _cands = [e for e in _entries if Path(e.filename).suffix.lower() in accepted_exts] if accepted_exts else _entries
+                if not _cands:
+                    _cands = _entries
+                if _cands:
+                    _best = max(_cands, key=lambda e: e.file_size)
+                    result.rom_inner_type = Path(_best.filename).suffix.lower().lstrip(".")
+                    # Flag if inner format is not the DAT's expected format
+                    if accepted_exts:
+                        _dat_exts = {Path(rom.name).suffix.lower() for game in dat.games for rom in game.roms if rom.name}
+                        _inner_ext = Path(_best.filename).suffix.lower()
+                        if _inner_ext and _inner_ext not in _dat_exts:
+                            _dat_fmt = ", ".join(sorted(_dat_exts)) or "unknown"
+                            result.errors.append(
+                                f"Format note: ROM inside zip is {_inner_ext}, "
+                                f"DAT expects {_dat_fmt}. "
+                                f"May need conversion (e.g. byte-order swap for N64)."
+                            )
+        except (zipfile.BadZipFile, OSError):
+            pass
+
     # 1. File-based analyzers first — they can confirm matches directly
     for analyzer in FILE_ANALYZERS:
         try:
@@ -61,7 +90,9 @@ def analyze_rom(
                     seen_games.add(s.dat_game_name)
                     result.suggestions.append(s)
         except Exception as e:
-            log.warning("Analyzer %s failed for %s: %s", analyzer.name, rom_stem, e)
+            msg = f"Analyzer '{analyzer.name}' failed: {e}"
+            log.warning("%s on %s", msg, rom_stem)
+            result.errors.append(msg)
 
     # If header strip found a confirmed match, return early
     if any(s.crc_match is True for s in result.suggestions):
@@ -77,14 +108,16 @@ def analyze_rom(
                     seen_games.add(s.dat_game_name)
                     result.suggestions.append(s)
         except Exception as e:
-            log.warning("Analyzer %s failed for %s: %s", analyzer.name, rom_stem, e)
+            msg = f"Analyzer '{analyzer.name}' failed: {e}"
+            log.warning("%s on %s", msg, rom_stem)
+            result.errors.append(msg)
 
     if not result.suggestions or not verify_crc:
         return result
 
     # 3. CRC verify name-based candidates (try raw CRC, then header-stripped)
-    actual_crc = _compute_crc(rom_path)
-    stripped_crcs = _compute_stripped_crcs(rom_path)
+    actual_crc = _compute_crc(rom_path, accepted_exts)
+    stripped_crcs = _compute_stripped_crcs(rom_path, accepted_exts)
     if not actual_crc:
         return result
 
@@ -113,7 +146,7 @@ def analyze_rom(
     return result
 
 
-def _compute_stripped_crcs(rom_path: Path) -> dict[str, str]:
+def _compute_stripped_crcs(rom_path: Path, accepted_exts: set[str] | None = None) -> dict[str, str]:
     """Compute CRC32 for header-stripped and byte-order-normalized variants.
 
     Returns {crc_hex: description} for each variant tried.
@@ -126,7 +159,7 @@ def _compute_stripped_crcs(rom_path: Path) -> dict[str, str]:
         to_bigendian,
     )
 
-    rom_data = _read_rom_data(rom_path)
+    rom_data = _read_rom_data(rom_path, accepted_exts)
     if not rom_data:
         return {}
 
@@ -150,14 +183,26 @@ def _compute_stripped_crcs(rom_path: Path) -> dict[str, str]:
     return result
 
 
-def _compute_crc(rom_path: Path) -> str:
-    """Compute CRC32 of a ROM file (handles zips)."""
+def _compute_crc(rom_path: Path, accepted_exts: set[str] | None = None) -> str:
+    """Compute CRC32 of the primary ROM file (handles zips).
+
+    For zips, reads the stored CRC from the central directory of the best
+    matching entry — avoiding bundled metadata files (READMEs, NFOs, etc.).
+    accepted_exts: whitelist of lowercase extensions; falls back to largest file.
+    """
     try:
         if rom_path.suffix.lower() == ".zip":
             with zipfile.ZipFile(rom_path, "r") as zf:
-                for info in zf.infolist():
-                    if not info.is_dir():
-                        return f"{info.CRC:08x}"
+                entries = [e for e in zf.infolist() if not e.is_dir()]
+                if accepted_exts:
+                    candidates = [e for e in entries if Path(e.filename).suffix.lower() in accepted_exts]
+                    if not candidates:
+                        candidates = entries
+                else:
+                    candidates = entries
+                if candidates:
+                    best = max(candidates, key=lambda e: e.file_size)
+                    return f"{best.CRC & 0xFFFFFFFF:08x}"
         else:
             data = rom_path.read_bytes()
             return f"{zlib.crc32(data) & 0xFFFFFFFF:08x}"

@@ -60,14 +60,25 @@ def to_bigendian(data: bytes, fmt: str) -> bytes:
     return bytes(arr)
 
 
-def _read_rom_data(rom_path: Path) -> bytes | None:
-    """Read the first (and usually only) file from a zip or read the file directly."""
+def _read_rom_data(rom_path: Path, accepted_exts: set[str] | None = None) -> bytes | None:
+    """Read the primary ROM data from a file or zip.
+
+    accepted_exts: whitelist of lowercase extensions (e.g. {'.z64', '.v64', '.n64'}).
+    Falls back to the largest file in the archive when nothing matches.
+    """
     try:
         if rom_path.suffix.lower() == ".zip":
             with zipfile.ZipFile(rom_path, "r") as zf:
-                for info in zf.infolist():
-                    if not info.is_dir():
-                        return zf.read(info.filename)
+                entries = [e for e in zf.infolist() if not e.is_dir()]
+                if accepted_exts:
+                    candidates = [e for e in entries if Path(e.filename).suffix.lower() in accepted_exts]
+                    if not candidates:
+                        candidates = entries
+                else:
+                    candidates = entries
+                if candidates:
+                    best = max(candidates, key=lambda e: e.file_size)
+                    return zf.read(best.filename)
         else:
             return rom_path.read_bytes()
     except (zipfile.BadZipFile, OSError) as e:
@@ -86,7 +97,10 @@ class N64ByteOrderAnalyzer:
 
     def analyze_file(self, rom_path: Path, dat: DatFile) -> list[Suggestion]:
         """Read ROM, detect byte order, normalize to BigEndian, lookup CRC in DAT."""
-        rom_data = _read_rom_data(rom_path)
+        from roms4me.handlers.registry import get_rom_extensions
+        # Include all N64 format variants so zips with .v64/.n64 are found
+        accepted = set(get_rom_extensions(dat.name)) or None
+        rom_data = _read_rom_data(rom_path, accepted)
         if not rom_data:
             return []
 

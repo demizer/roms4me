@@ -43,6 +43,14 @@ class AnalysisResult:
     suggestions: list[Suggestion] = field(default_factory=list)
     """Ranked list of candidate matches, best first."""
 
+    errors: list[str] = field(default_factory=list)
+    """Analyzer errors or warnings to surface to the user."""
+
+    rom_inner_type: str = ""
+    """Extension of the primary ROM file inside an archive (e.g. 'v64', 'sfc').
+    Empty for loose ROM files (use the file's own extension instead).
+    Populated by the pipeline so callers can update the DB without re-reading the zip."""
+
     @property
     def best(self) -> Suggestion | None:
         """Return the highest-confidence suggestion, or None."""

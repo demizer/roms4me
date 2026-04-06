@@ -42,7 +42,9 @@ class HeaderStripAnalyzer:
 
     def analyze_file(self, rom_path: Path, dat: DatFile) -> list[Suggestion]:
         """Analyze a ROM file by stripping headers and checking CRC matches."""
-        rom_data = _read_rom_data(rom_path)
+        from roms4me.handlers.registry import get_rom_extensions
+        accepted = set(get_rom_extensions(dat.name)) or None
+        rom_data = _read_rom_data(rom_path, accepted)
         if not rom_data:
             return []
 
@@ -111,14 +113,26 @@ class HeaderStripAnalyzer:
         return suggestions
 
 
-def _read_rom_data(rom_path: Path) -> bytes | None:
-    """Read ROM data from a file or zip."""
+def _read_rom_data(rom_path: Path, accepted_exts: set[str] | None = None) -> bytes | None:
+    """Read the primary ROM data from a file or zip.
+
+    accepted_exts: whitelist of lowercase extensions (e.g. {'.sfc', '.smc'}).
+    For zips, selects the first matching entry; falls back to the largest
+    file in the archive when no whitelist is provided or nothing matches.
+    """
     try:
         if rom_path.suffix.lower() == ".zip":
             with zipfile.ZipFile(rom_path, "r") as zf:
-                for info in zf.infolist():
-                    if not info.is_dir():
-                        return zf.read(info.filename)
+                entries = [e for e in zf.infolist() if not e.is_dir()]
+                if accepted_exts:
+                    candidates = [e for e in entries if Path(e.filename).suffix.lower() in accepted_exts]
+                    if not candidates:
+                        candidates = entries  # fall back: have the game but unknown format
+                else:
+                    candidates = entries
+                if candidates:
+                    best = max(candidates, key=lambda e: e.file_size)
+                    return zf.read(best.filename)
         else:
             return rom_path.read_bytes()
     except (zipfile.BadZipFile, OSError) as e:
