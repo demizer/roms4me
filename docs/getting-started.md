@@ -52,6 +52,8 @@ Click a system in the sidebar to view its ROM list, pre-scan rating, and matched
 
 Select ROMs in the list and click **Analyze** to run CRC verification against the DAT database. Matched ROMs are confirmed good dumps; unmatched ROMs may be fan translations, hacks, or bad dumps.
 
+Right-click any row in the grid and choose **View analysis** to inspect the details for that file — archive contents, DAT match candidates, the raw analysis log, and the planned export steps.
+
 ### 5. Export
 
 Select verified ROMs and click **Add to Queue**. When ready, click the **Queue** button in the toolbar, set your export destination (e.g. an SD card path), configure region priority if needed, and click **Process Queue**.
