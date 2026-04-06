@@ -750,11 +750,16 @@ function updateStatusSummary(results) {
 // --- Refresh ---
 
 document.getElementById("btn-sync").addEventListener("click", () => {
-    startBackgroundTask("/api/refresh", "Pre-scanning...", async () => {
+    const fetchOpts = currentSystem ? {
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ system_name: currentSystem }),
+    } : {};
+    const title = currentSystem ? `Syncing ${currentSystem}...` : "Pre-scanning...";
+    startBackgroundTask("/api/refresh", title, async () => {
         await loadWelcome();
         await loadSystems();
         if (currentSystem) await selectSystem(currentSystem);
-    });
+    }, fetchOpts);
 });
 
 document.getElementById("confirm-sync-yes").addEventListener("click", () => {
@@ -773,7 +778,7 @@ document.getElementById("confirm-sync-no").addEventListener("click", () => {
  * @param {string} title - Title for the log view
  * @param {Function} onDone - Callback when task completes
  */
-async function startBackgroundTask(url, title, onDone) {
+async function startBackgroundTask(url, title, onDone, fetchOpts = {}) {
     const btn = document.getElementById("btn-sync");
     btn.disabled = true;
     setStatus(title);
@@ -787,7 +792,7 @@ async function startBackgroundTask(url, title, onDone) {
     logEl.innerHTML = "";
 
     try {
-        const start = await fetchJson(url, { method: "POST" });
+        const start = await fetchJson(url, { method: "POST", ...fetchOpts });
         if (start.status === "already_running") {
             setStatus("A task is already in progress");
             btn.disabled = false;

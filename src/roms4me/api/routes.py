@@ -348,11 +348,17 @@ async def get_scan_log() -> dict:
 
 
 @router.post("/refresh")
-async def refresh() -> dict:
-    """Start a pre-scan in a background thread. Returns immediately."""
+async def refresh(req: dict | None = None) -> dict:
+    """Start a pre-scan in a background thread. Returns immediately.
+
+    Optional body: {"system_name": "Nintendo - N64"} to sync one system only.
+    Omit body (or pass no system_name) to sync all systems.
+    """
     import threading
     import roms4me.core.scan_log as scan_log_mod
     from roms4me.core.scan_log import ScanLog
+
+    system_name = (req or {}).get("system_name") or None
 
     if scan_log_mod.scan_running:
         return {"status": "already_running"}
@@ -363,7 +369,7 @@ async def refresh() -> dict:
 
     def run():
         try:
-            _do_prescan(scan)
+            _do_prescan(scan, system_name)
         finally:
             scan_log_mod.scan_running = False
 
@@ -390,31 +396,51 @@ async def refresh_status() -> dict:
     }
 
 
-def _do_prescan(scan):
-    """Run pre-scan: match each ROM directory to DATs using system matcher, then check compatibility."""
+def _do_prescan(scan, system_name: str | None = None):
+    """Run pre-scan: match each ROM directory to DATs using system matcher, then check compatibility.
+
+    If system_name is given, only that system's data is cleared and re-scanned.
+    If None, all systems are cleared and re-scanned.
+    """
     from roms4me.services.prescan import prescan_system
     from roms4me.services.system_matcher import match_system
 
-    scan.info("Starting pre-scan...")
+    if system_name:
+        scan.info(f"Syncing {system_name}...", color="blue")
+    else:
+        scan.info("Starting pre-scan...")
 
     with get_session() as session:
         dat_paths, rom_paths = _resolve_paths(session)
         systems = {s.id: s.name for s in session.exec(select(System)).all()}
 
-        # Clear old prescan results and scan results
-        for r in session.exec(select(PrescanInfo)).all():
-            session.delete(r)
-        for r in session.exec(select(ScanResult)).all():
-            session.delete(r)
+        if system_name:
+            # Single-system sync: only clear and re-process this system
+            target = session.exec(select(System).where(System.name == system_name)).first()
+            if not target:
+                scan.info(f"System not found: {system_name}", color="red")
+                scan.finish("")
+                return
+            for r in session.exec(select(PrescanInfo).where(PrescanInfo.system_id == target.id)).all():
+                session.delete(r)
+            for r in session.exec(select(ScanResult).where(ScanResult.system_id == target.id)).all():
+                session.delete(r)
+            session.commit()
+            rom_paths = [rp for rp in rom_paths if rp.system_id == target.id]
+        else:
+            # Full sync: clear all results and remove stale systems
+            for r in session.exec(select(PrescanInfo)).all():
+                session.delete(r)
+            for r in session.exec(select(ScanResult)).all():
+                session.delete(r)
 
-        # Clean up stale System rows not referenced by current config
-        config_systems = {e.system for e in load_config().rom_paths}
-        config_systems |= {e.system for e in load_config().dat_paths}
-        for sys in session.exec(select(System)).all():
-            if sys.name not in config_systems:
-                session.delete(sys)
-                scan.info(f"  Removed stale system: {sys.name}")
-        session.commit()
+            config_systems = {e.system for e in load_config().rom_paths}
+            config_systems |= {e.system for e in load_config().dat_paths}
+            for sys in session.exec(select(System)).all():
+                if sys.name not in config_systems:
+                    session.delete(sys)
+                    scan.info(f"  Removed stale system: {sys.name}")
+            session.commit()
 
         # Build DAT system name -> list of DatPath
         dat_system_names = []
