@@ -261,7 +261,7 @@ a.status-badge.active { outline: 2px solid var(--pico-primary); }
     margin: 0;
 }
 
-#btn-delete {
+#btn-exclude {
     --pico-color: #c62828;
     --pico-border-color: #c62828;
 }
@@ -567,11 +567,11 @@ tr.dg-row.dg-selected td {
     color: #2e7d32;
 }
 
-.plan-delete {
+.plan-exclude {
     color: #c62828;
 }
 
-.dg-row.plan-row-delete td {
+.dg-row.plan-row-exclude td {
     color: #c62828 !important;
 }
 

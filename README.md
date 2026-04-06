@@ -10,6 +10,7 @@ A ROM collection organizer, verifier and bulk renamer. Matches your ROM files ag
 - **CRC verification** — verify ROMs against DAT databases, detect bad dumps and mismatches
 - **Analyzer pipeline** — heuristic matching for unidentified ROMs: direct CRC lookup, copier header stripping, region mapping, fuzzy name matching
 - **Export planner** — plans file transformations: header removal, renaming, repackaging
+- **Non-destructive** — source ROM collections are never modified; all writes go only to the export destination path
 - **Web UI** — responsive browser interface with filterable/sortable data grid, real-time analysis progress, context menus, and system management
 - **Multi-system** — scan and manage multiple platforms simultaneously
 - **Pre-scan** — quick compatibility check between ROM directories and DAT files before full verification
