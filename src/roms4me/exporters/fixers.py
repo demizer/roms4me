@@ -16,6 +16,12 @@ HEADER_EXTENSIONS = {
     ".nes": 16,    # NES iNES header (when DAT expects headerless)
 }
 
+# N64 byte-order variant extensions — all three hold identical data, just
+# arranged differently.  We never rename between them on export because the
+# game is playable as-is; only the CRC normalisation step (in the analyzer)
+# needs the conversion.
+_N64_EXTS: frozenset[str] = frozenset({".z64", ".v64", ".n64"})
+
 
 def _inner_ext_from_zip(
     rom_file: Path,
@@ -84,7 +90,11 @@ class HeaderStripFixer:
 
 
 class RenameExtFixer:
-    """Suggests renaming the ROM extension to match the DAT."""
+    """Suggests renaming the ROM extension to match the DAT.
+
+    N64 byte-order variants (.z64/.v64/.n64) are never renamed — they hold
+    identical data and the game is playable in any of the three formats.
+    """
 
     name = "rename_ext"
 
@@ -103,46 +113,14 @@ class RenameExtFixer:
         if not inner_ext or inner_ext == dat_rom_ext.lower():
             return []
 
+        # N64 byte-order variants are equivalent — no rename needed
+        if inner_ext in _N64_EXTS and dat_rom_ext.lower() in _N64_EXTS:
+            return []
+
         return [ExportStep(
             name="rename_ext",
             description=f"Rename extension: {inner_ext} → {dat_rom_ext}",
             params={"from_ext": inner_ext, "to_ext": dat_rom_ext},
-        )]
-
-
-class N64ByteOrderFixer:
-    """Detects non-BigEndian N64 ROMs and suggests byte-order conversion to BigEndian (.z64)."""
-
-    name = "convert_byteorder"
-    _N64_EXTS: frozenset[str] = frozenset({".z64", ".v64", ".n64"})
-
-    def suggest(self, rom_file: Path, rom_data: bytes, dat_game_name: str,
-                dat_rom_name: str, dat_rom_ext: str,
-                accepted_exts: set[str] | None = None) -> list[ExportStep]:
-        """Suggest byte-order conversion when ROM is not BigEndian."""
-        from roms4me.analyzers.n64_byteorder import detect_n64_format
-
-        if rom_file.suffix.lower() == ".zip":
-            inner_ext = _inner_ext_from_zip(rom_file, accepted_exts)
-        else:
-            inner_ext = rom_file.suffix.lower()
-
-        if inner_ext not in self._N64_EXTS:
-            return []
-
-        fmt = detect_n64_format(rom_data)
-        if fmt is None or fmt == "bigendian":
-            return []
-
-        _labels = {
-            "byteswapped":  "Byte Swapped (.v64)",
-            "littleendian": "Little Endian (.n64)",
-        }
-        label = _labels.get(fmt, fmt)
-        return [ExportStep(
-            name="convert_byteorder",
-            description=f"Convert {label} → Big Endian (.z64) (same data, corrected byte order)",
-            params={"from_fmt": fmt},
         )]
 
 
@@ -179,7 +157,12 @@ class RemoveEmbeddedFixer:
 
 
 class ZipPackageFixer:
-    """Suggests zipping the ROM with the DAT-correct filename."""
+    """Suggests zipping the ROM with the DAT-correct filename.
+
+    For N64 byte-order variants the inner filename keeps the original
+    extension rather than the DAT extension (.z64), since the bytes are
+    not being converted.
+    """
 
     name = "zip_package"
 
@@ -188,7 +171,18 @@ class ZipPackageFixer:
                 accepted_exts: set[str] | None = None) -> list[ExportStep]:
         """Suggest packaging as a zip with the correct DAT name."""
         target_zip = f"{dat_game_name}.zip"
-        target_inner = dat_rom_name
+
+        # For N64 variants: preserve the actual ROM extension in the inner name
+        # so we don't misrepresent the byte order of the exported file.
+        if rom_file.suffix.lower() == ".zip":
+            inner_ext = _inner_ext_from_zip(rom_file, accepted_exts)
+        else:
+            inner_ext = rom_file.suffix.lower()
+
+        if inner_ext in _N64_EXTS and dat_rom_ext.lower() in _N64_EXTS:
+            target_inner = f"{dat_game_name}{inner_ext}"
+        else:
+            target_inner = dat_rom_name
 
         return [ExportStep(
             name="zip_package",
@@ -203,7 +197,6 @@ class ZipPackageFixer:
 # All fixers in pipeline order
 ALL_FIXERS = [
     HeaderStripFixer(),
-    N64ByteOrderFixer(),
     RenameExtFixer(),
     RemoveEmbeddedFixer(),
     ZipPackageFixer(),

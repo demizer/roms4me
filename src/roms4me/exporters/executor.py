@@ -44,9 +44,6 @@ def execute_export(rom_path: Path, plan: ExportPlan, dest_dir: Path,
         if step.name == "strip_header":
             header_size = step.params["header_size"]
             rom_data = rom_data[header_size:]
-        elif step.name == "convert_byteorder":
-            from roms4me.analyzers.n64_byteorder import to_bigendian
-            rom_data = to_bigendian(rom_data, step.params.get("from_fmt", "byteswapped"))
         elif step.name == "zip_package":
             zip_name = step.params["zip_name"]
             inner_name = step.params["inner_name"]
