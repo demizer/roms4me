@@ -697,7 +697,7 @@ async function showRomAnalysis(row) {
     tabBar.className = "ra-tabs";
     const panes = {};
 
-    for (const [id, label] of [["data", "Data"], ["logs", "Logs"], ["export", "Export"]]) {
+    for (const [id, label] of [["data", "Data"], ["logs", "Logs"], ["export", "Export plan"]]) {
         const btn = document.createElement("button");
         btn.className = "ra-tab" + (id === "data" ? " active" : "");
         btn.textContent = label;
