@@ -234,6 +234,7 @@ async function selectSystem(systemName) {
 
         // Toolbar buttons
         const analyzeBtn = document.getElementById("btn-analyze");
+        const viewAnalysisBtn = document.getElementById("btn-view-analysis");
         const exportBtn = document.getElementById("btn-add-queue");
         const deleteBtn = document.getElementById("btn-exclude");
         analyzeBtn.disabled = true;
@@ -241,6 +242,10 @@ async function selectSystem(systemName) {
 
         // Wire up analyze button
         analyzeBtn.onclick = () => startAnalysis(systemName);
+        viewAnalysisBtn.onclick = () => {
+            const rows = gameGrid.getSelectedRows();
+            if (rows.length === 1) showRomAnalysis(rows[0]);
+        };
         exportBtn.onclick = () => {
             const rows = gameGrid.getSelectedRows();
             if (rows.length > 0) addToQueue(rows);
@@ -256,8 +261,10 @@ async function selectSystem(systemName) {
         gameGrid.setFilter("status", new Set(["ok", "unverified", "unmatched", "matched"]));
         gameGrid.onSelectionChange = (selected) => {
             const n = selected.length;
+            const allAnalyzed = n > 0 && selected.every((r) => r.status && r.status !== "unverified");
             analyzeBtn.disabled = n === 0;
-            analyzeBtn.textContent = n > 0 ? "Analyze (" + n + ")" : "Analyze";
+            analyzeBtn.textContent = allAnalyzed ? "Re-analyze (" + n + ")" : n > 0 ? "Analyze (" + n + ")" : "Analyze";
+            viewAnalysisBtn.hidden = !(allAnalyzed && n === 1);
             exportBtn.disabled = n === 0;
             exportBtn.textContent = n > 0 ? "Add to Queue (" + n + ")" : "Add to Queue";
             deleteBtn.hidden = n === 0;
@@ -289,6 +296,7 @@ async function startAnalysis(systemName) {
     // Open split panel
     const verifyPanel = document.getElementById("verify-panel");
     const verifyLog = document.getElementById("verify-log");
+    verifyPanel.querySelector("#verify-panel-header strong").textContent = "Verification Log";
     verifyPanel.hidden = false;
     verifyLog.innerHTML = "";
     Resize.initVertical("resize-verify", "verify-panel");
@@ -660,12 +668,18 @@ function _fmtSize(bytes) {
 }
 
 async function showRomAnalysis(row) {
-    /** Open the ROM analysis modal with Data / Logs / Export tabs. */
-    const titleEl = document.getElementById("rom-analysis-title");
-    const bodyEl = document.getElementById("rom-analysis-body");
-    titleEl.textContent = row.file_name || "ROM Analysis";
-    bodyEl.innerHTML = '<p style="color:var(--pico-muted-color)">Loading…</p>';
-    Modal.open("rom-analysis-modal");
+    /** Show ROM analysis Data/Logs/Export tabs in the verify panel. */
+    const verifyPanel = document.getElementById("verify-panel");
+    const verifyLog = document.getElementById("verify-log");
+    const header = verifyPanel.querySelector("#verify-panel-header strong");
+
+    // Snapshot the current log content for the Logs tab before we replace it
+    const logSnapshot = verifyLog.cloneNode(true);
+
+    header.textContent = row.file_name || "ROM Analysis";
+    verifyPanel.hidden = false;
+    verifyLog.innerHTML = '<div class="ra-panel-view"><p style="color:var(--pico-muted-color)">Loading…</p></div>';
+    Resize.initVertical("resize-verify", "verify-panel");
 
     let data;
     try {
@@ -674,11 +688,13 @@ async function showRomAnalysis(row) {
             "?file=" + encodeURIComponent(row.file_name)
         );
     } catch (e) {
-        bodyEl.innerHTML = '<p style="color:var(--pico-del-color)">' + e.message + "</p>";
+        verifyLog.innerHTML = '<div class="ra-panel-view"><p style="color:var(--pico-del-color)">' + e.message + "</p></div>";
         return;
     }
 
     // ── Tab scaffold ────────────────────────────────────────────────────────
+    const wrapper = document.createElement("div");
+    wrapper.className = "ra-panel-view";
     const frag = document.createDocumentFragment();
     const tabBar = document.createElement("div");
     tabBar.className = "ra-tabs";
@@ -785,11 +801,10 @@ async function showRomAnalysis(row) {
     }
 
     // ── Logs tab ────────────────────────────────────────────────────────────
-    const verifyLog = document.getElementById("verify-log");
-    if (verifyLog && verifyLog.textContent.trim()) {
-        const logClone = verifyLog.cloneNode(true);
-        logClone.style.fontSize = "0.78rem";
-        panes.logs.appendChild(logClone);
+    if (logSnapshot && logSnapshot.textContent.trim()) {
+        logSnapshot.style.fontSize = "0.78rem";
+        logSnapshot.style.background = "none";
+        panes.logs.appendChild(logSnapshot);
     } else {
         const p = document.createElement("p");
         p.style.color = "var(--pico-muted-color)";
@@ -798,57 +813,38 @@ async function showRomAnalysis(row) {
     }
 
     // ── Export tab ──────────────────────────────────────────────────────────
-    const exportLoading = document.createElement("p");
-    exportLoading.style.color = "var(--pico-muted-color)";
-    exportLoading.textContent = "Loading…";
-    panes.export.appendChild(exportLoading);
-
-    if (currentSystem) {
-        fetchJson("/api/analyze/" + encodeURIComponent(currentSystem), {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ files: [row.file_name] }),
-        }).then((resp) => {
-            panes.export.innerHTML = "";
-            let hasSteps = false;
-            for (const result of (resp.results || [])) {
-                if (!result.export_plan || result.export_plan.steps.length === 0) continue;
-                hasSteps = true;
-                const sec = document.createElement("div");
-                sec.className = "rom-analysis-section";
-                const h = document.createElement("h6");
-                h.textContent = result.export_plan.target_name;
-                sec.appendChild(h);
-                const table = document.createElement("table");
-                table.className = "rom-analysis-table";
-                table.innerHTML = "<thead><tr><th>Step</th><th>Description</th></tr></thead>";
-                const tbody = document.createElement("tbody");
-                for (const step of result.export_plan.steps) {
-                    const tr = document.createElement("tr");
-                    tr.innerHTML =
-                        '<td class="type-badge">' + step.name + "</td>" +
-                        "<td>" + step.description + "</td>";
-                    tbody.appendChild(tr);
-                }
-                table.appendChild(tbody);
-                sec.appendChild(table);
-                panes.export.appendChild(sec);
-            }
-            if (!hasSteps) {
-                const p = document.createElement("p");
-                p.style.color = "var(--pico-muted-color)";
-                p.textContent = "No export steps needed.";
-                panes.export.appendChild(p);
-            }
-        }).catch((e) => {
-            panes.export.innerHTML = '<p style="color:var(--pico-del-color)">Error: ' + e.message + "</p>";
-        });
+    if (data.export_steps && data.export_steps.length > 0) {
+        const sec = document.createElement("div");
+        sec.className = "rom-analysis-section";
+        const h = document.createElement("h6");
+        h.textContent = data.export_target || "Export plan";
+        sec.appendChild(h);
+        const table = document.createElement("table");
+        table.className = "rom-analysis-table";
+        table.innerHTML = "<thead><tr><th>Step</th><th>Description</th></tr></thead>";
+        const tbody = document.createElement("tbody");
+        for (const step of data.export_steps) {
+            const tr = document.createElement("tr");
+            tr.innerHTML =
+                '<td class="type-badge">' + step.name + "</td>" +
+                "<td>" + step.description + "</td>";
+            tbody.appendChild(tr);
+        }
+        table.appendChild(tbody);
+        sec.appendChild(table);
+        panes.export.appendChild(sec);
     } else {
-        panes.export.innerHTML = '<p style="color:var(--pico-muted-color)">No system selected.</p>';
+        const p = document.createElement("p");
+        p.style.color = "var(--pico-muted-color)";
+        p.textContent = data.db_rows && data.db_rows.length > 0
+            ? "No export steps needed."
+            : "Run analysis first to generate an export plan.";
+        panes.export.appendChild(p);
     }
 
-    bodyEl.innerHTML = "";
-    bodyEl.appendChild(frag);
+    wrapper.appendChild(frag);
+    verifyLog.innerHTML = "";
+    verifyLog.appendChild(wrapper);
 }
 
 function showExportPlan(row) {

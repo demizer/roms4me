@@ -1468,9 +1468,50 @@ async def rom_details(system_name: str, file: str) -> dict:
         # Inner ROM type: prefer DB value, fall back to inspecting embedded files
         inner_rom_type = db_rows[0].rom_type if db_rows and db_rows[0].rom_type else ""
         if not inner_rom_type and embedded:
-            # Pick the type of the largest embedded file
             biggest = max(embedded, key=lambda e: e["size"])
             inner_rom_type = biggest["type"]
+
+        # Export plan — build synchronously from the matched DB row + DAT
+        export_steps: list[dict] = []
+        export_target: str = ""
+        matched_row = next((r for r in db_rows if r.status == "matched"), None)
+        if matched_row and rom_file:
+            from roms4me.analyzers.base import Suggestion as _Suggestion
+            from roms4me.exporters.planner import plan_export as _plan_export
+            from roms4me.services.dat_parser import parse_dat_file
+            from roms4me.services.system_matcher import match_system
+
+            all_dats, _ = _resolve_paths(session)
+            all_systems_map = {s.id: s.name for s in session.exec(select(System)).all()}
+            dat_system_names = list({all_systems_map.get(dp.system_id, "") for dp in all_dats})
+            matched_dat_system = match_system(system_name, dat_system_names)
+            if matched_dat_system:
+                dat_entries = [dp for dp in all_dats if all_systems_map.get(dp.system_id) == matched_dat_system]
+                for dp in dat_entries:
+                    dat_path = Path(dp.path)
+                    if not dat_path.exists():
+                        continue
+                    try:
+                        dat = parse_dat_file(dat_path)
+                        ep = _plan_export(
+                            rom_file,
+                            _Suggestion(
+                                dat_game_name=matched_row.game_name,
+                                confidence=1.0,
+                                reason="",
+                                crc_match=True,
+                            ),
+                            dat,
+                        )
+                        if ep.steps:
+                            export_steps = [
+                                {"name": s.name, "description": s.description}
+                                for s in ep.steps
+                            ]
+                            export_target = ep.target_name
+                            break
+                    except Exception as e:
+                        log.warning("Could not build export plan for %s: %s", file, e)
 
         return {
             "file_name": file,
@@ -1481,6 +1522,8 @@ async def rom_details(system_name: str, file: str) -> dict:
             "rom_type": inner_rom_type,
             "embedded": embedded,
             "archive_error": archive_error,
+            "export_steps": export_steps,
+            "export_target": export_target,
             "db_rows": [
                 {
                     "game_name": r.game_name,
