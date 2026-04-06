@@ -13,6 +13,7 @@ from pathlib import Path
 from roms4me.analyzers.base import AnalysisResult, Suggestion
 from roms4me.analyzers.crc_lookup import CrcLookupAnalyzer
 from roms4me.analyzers.header_strip import HeaderStripAnalyzer
+from roms4me.analyzers.n64_byteorder import N64ByteOrderAnalyzer
 from roms4me.analyzers.name_contains import NameContainsAnalyzer
 from roms4me.analyzers.region_map import RegionMapAnalyzer
 from roms4me.models.dat import DatFile
@@ -29,6 +30,7 @@ NAME_ANALYZERS = [
 FILE_ANALYZERS = [
     CrcLookupAnalyzer(),
     HeaderStripAnalyzer(),
+    N64ByteOrderAnalyzer(),
 ]
 
 
@@ -112,19 +114,39 @@ def analyze_rom(
 
 
 def _compute_stripped_crcs(rom_path: Path) -> dict[str, str]:
-    """Compute CRC32 for each header-stripped variant. Returns {crc: header_desc}."""
+    """Compute CRC32 for header-stripped and byte-order-normalized variants.
+
+    Returns {crc_hex: description} for each variant tried.
+    Used by the name-based CRC verify step.
+    """
     from roms4me.analyzers.header_strip import HEADER_SIZES, _read_rom_data
+    from roms4me.analyzers.n64_byteorder import (
+        _FORMAT_LABEL,
+        detect_n64_format,
+        to_bigendian,
+    )
 
     rom_data = _read_rom_data(rom_path)
     if not rom_data:
         return {}
 
     result = {}
+
+    # Header-stripping variants (SNES, NES, Lynx, Atari 7800)
     for header_size, header_desc in HEADER_SIZES:
         if len(rom_data) <= header_size:
             continue
         stripped_crc = f"{zlib.crc32(rom_data[header_size:]) & 0xFFFFFFFF:08x}"
         result[stripped_crc] = header_desc
+
+    # N64 byte-order normalization
+    fmt = detect_n64_format(rom_data)
+    if fmt and fmt != "bigendian":
+        normalized = to_bigendian(rom_data, fmt)
+        normalized_crc = f"{zlib.crc32(normalized) & 0xFFFFFFFF:08x}"
+        label = _FORMAT_LABEL.get(fmt, fmt)
+        result[normalized_crc] = f"N64 {label} → BigEndian conversion"
+
     return result
 
 
