@@ -115,6 +115,66 @@ class TestFilterSearch:
         for item in items:
             assert "test" in item["text"].lower()
 
+    def test_search_text_filters_grid_rows(self, page, app):
+        """Typing in the search box should immediately filter the grid rows."""
+        _setup_system(page, app)
+        initial_rows = _get_visible_row_count(page)
+        assert initial_rows > 1, "Need multiple rows to filter"
+
+        _open_game_filter(page)
+        page.fill(".dg-filter-search", "Alpha")
+        page.wait_for_timeout(200)
+
+        filtered_rows = _get_visible_row_count(page)
+        assert filtered_rows < initial_rows, "Grid should show fewer rows after typing 'Alpha'"
+        assert filtered_rows >= 1, "At least one row should match 'Alpha'"
+
+        # Every visible row must contain 'alpha' in the game name
+        for row in page.locator(".dg-row").all():
+            game_cell = row.locator(".dg-td").nth(1).inner_text().strip()
+            assert "alpha" in game_cell.lower(), f"Row '{game_cell}' does not match search 'Alpha'"
+
+    def test_search_text_filter_persists_after_dialog_close(self, page, app):
+        """Text filter applied in the dialog should persist after the dialog is closed."""
+        _setup_system(page, app)
+        initial_rows = _get_visible_row_count(page)
+
+        _open_game_filter(page)
+        page.fill(".dg-filter-search", "Alpha")
+        page.wait_for_timeout(200)
+        filtered_rows = _get_visible_row_count(page)
+
+        # Close dialog
+        page.click("#game-list-title")
+        page.wait_for_timeout(200)
+
+        # Row count should remain filtered
+        assert _get_visible_row_count(page) == filtered_rows
+        assert _get_visible_row_count(page) < initial_rows
+
+    def test_search_text_filter_dot_shown(self, page, app):
+        """Game column header should show a filter dot when text filter is active."""
+        _setup_system(page, app)
+        _open_game_filter(page)
+        page.fill(".dg-filter-search", "Alpha")
+        page.wait_for_timeout(200)
+        dot = page.locator(".dg-th:has-text('Game') .dg-th-filter-dot")
+        expect(dot).to_have_text(" ●")
+
+    def test_clearing_search_text_removes_filter(self, page, app):
+        """Clearing the search box should remove the text filter and restore rows."""
+        _setup_system(page, app)
+        initial_rows = _get_visible_row_count(page)
+
+        _open_game_filter(page)
+        page.fill(".dg-filter-search", "Alpha")
+        page.wait_for_timeout(200)
+        assert _get_visible_row_count(page) < initial_rows
+
+        page.fill(".dg-filter-search", "")
+        page.wait_for_timeout(200)
+        assert _get_visible_row_count(page) == initial_rows
+
     def test_search_text_persists_on_reopen(self, page, app):
         """Search text should be preserved when reopening the filter."""
         _setup_system(page, app)
@@ -127,6 +187,46 @@ class TestFilterSearch:
         _open_game_filter(page)
         search_val = page.input_value(".dg-filter-search")
         assert search_val == "Alpha"
+
+
+    def test_status_search_filters_grid_rows(self, page, app):
+        """Text search in the Status filter dialog should also filter the grid rows."""
+        _setup_system(page, app)
+        # First check all statuses so we see all owned rows
+        _open_status_filter(page)
+        page.click(".dg-filter-controls a:has-text('All')")
+        page.wait_for_timeout(200)
+        page.click("#game-list-title")
+        page.wait_for_timeout(200)
+
+        initial_rows = _get_visible_row_count(page)
+        assert initial_rows > 1
+
+        _open_status_filter(page)
+        page.fill(".dg-filter-search", "unver")
+        page.wait_for_timeout(200)
+
+        filtered_rows = _get_visible_row_count(page)
+        assert filtered_rows < initial_rows, "Grid should show fewer rows after typing 'unver' in status filter"
+
+        # Every visible row must show 'unverified' status
+        for row in page.locator(".dg-row").all():
+            status_cell = row.locator(".dg-td").nth(2).inner_text().strip()
+            assert "unverified" in status_cell.lower(), f"Row status '{status_cell}' does not match 'unver'"
+
+    def test_filter_dialog_no_horizontal_scrollbar(self, page, app):
+        """Filter dialog should expand to fit content — no horizontal scrollbar."""
+        _setup_system(page, app)
+        _open_game_filter(page)
+
+        result = page.evaluate("""() => {
+            const d = document.querySelector('.dg-filter-dialog');
+            return { scrollWidth: d.scrollWidth, offsetWidth: d.offsetWidth };
+        }""")
+        assert result["scrollWidth"] <= result["offsetWidth"], (
+            f"Dialog has horizontal overflow: scrollWidth={result['scrollWidth']} > "
+            f"offsetWidth={result['offsetWidth']}"
+        )
 
 
 class TestFilterAllNone:
