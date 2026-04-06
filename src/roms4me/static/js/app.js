@@ -1,6 +1,9 @@
 /** @type {string|null} */
 let currentSystem = null;
 
+/** Row currently displayed in the analysis panel (null when panel is closed). */
+let _currentAnalysisRow = null;
+
 const statusText = document.getElementById("status-text");
 
 // --- Queue ---
@@ -280,6 +283,7 @@ async function selectSystem(systemName) {
 // Close verify panel
 document.getElementById("verify-panel-close").addEventListener("click", () => {
     document.getElementById("verify-panel").hidden = true;
+    _currentAnalysisRow = null;
 });
 
 async function startAnalysis(systemName) {
@@ -603,6 +607,12 @@ document.getElementById("export-settings-confirm").addEventListener("click", () 
     _pendingQueueRows = [];
     updateQueueButton();
     Modal.close("export-settings-modal");
+
+    // Refresh the analysis panel if it's showing one of the just-queued files
+    if (_currentAnalysisRow && finalItems.some((i) => i.file_name === _currentAnalysisRow.file_name)) {
+        showRomAnalysis(_currentAnalysisRow);
+    }
+
     const added = finalItems.length;
     setStatus(added > 0
         ? "Added " + added + " item(s) to queue (" + exportQueue.length + " total)"
@@ -792,6 +802,7 @@ function _fmtSize(bytes) {
 
 async function showRomAnalysis(row) {
     /** Show ROM analysis Data/Logs/Export tabs in the verify panel. */
+    _currentAnalysisRow = row;
     const verifyPanel = document.getElementById("verify-panel");
     const verifyLog = document.getElementById("verify-log");
     const header = verifyPanel.querySelector("#verify-panel-header strong");
@@ -936,33 +947,74 @@ async function showRomAnalysis(row) {
     }
 
     // ── Export tab ──────────────────────────────────────────────────────────
-    if (data.export_steps && data.export_steps.length > 0) {
-        const callout = document.createElement("div");
-        callout.className = "ra-callout";
-        callout.innerHTML =
-            '<span class="ra-callout-icon">&#9432;</span>' +
-            '<div class="ra-callout-body">' +
-            '<strong>Auto-generated plan</strong>' +
-            'Steps shown are based on analysis only. Click \u201cAdd to Queue\u201d to configure destination, format, and region settings before exporting.' +
-            '</div>';
-        panes.export.appendChild(callout);
+    const inQueue = exportQueue.some(
+        (q) => q.file_name === row.file_name && q.system === currentSystem
+    );
+
+    // Load saved export settings for this system (needed to adjust plan display)
+    let exportSettings = {};
+    if (inQueue) {
+        try {
+            exportSettings = await fetchJson(
+                "/api/config/export-settings/" + encodeURIComponent(currentSystem)
+            );
+        } catch (_) {}
     }
 
     if (data.export_steps && data.export_steps.length > 0) {
+        const callout = document.createElement("div");
+        callout.className = "ra-callout";
+        if (inQueue) {
+            const dest = exportSettings.dest || "(no destination set)";
+            const fmt = exportSettings.archive_format === "7z" ? "7z" : "zip";
+            const romOnly = exportSettings.rom_only !== false;
+            callout.innerHTML =
+                '<span class="ra-callout-icon">&#10003;</span>' +
+                '<div class="ra-callout-body">' +
+                '<strong>Queued</strong>' +
+                'Destination: ' + esc(dest) + ' &nbsp;&bull;&nbsp; Format: ' + fmt +
+                (romOnly ? ' &nbsp;&bull;&nbsp; ROM only' : '') +
+                '</div>';
+            callout.style.borderLeftColor = "var(--pico-ins-color, #4caf50)";
+            callout.style.background = "color-mix(in srgb, var(--pico-ins-color, #4caf50) 10%, var(--pico-card-background-color, transparent))";
+        } else {
+            callout.innerHTML =
+                '<span class="ra-callout-icon">&#9432;</span>' +
+                '<div class="ra-callout-body">' +
+                '<strong>Auto-generated plan</strong>' +
+                'Steps shown are based on analysis only. Click \u201cAdd to Queue\u201d to configure destination, format, and region settings before exporting.' +
+                '</div>';
+        }
+        panes.export.appendChild(callout);
+
+        // Filter steps based on settings when queued
+        let steps = data.export_steps;
+        const romOnly = exportSettings.rom_only !== false;
+        const use7z = exportSettings.archive_format === "7z";
+        if (inQueue && !romOnly) {
+            steps = steps.filter((s) => s.name !== "remove_embedded");
+        }
+
         const sec = document.createElement("div");
         sec.className = "rom-analysis-section";
         const h = document.createElement("h6");
-        h.textContent = data.export_target || "Export plan";
+        h.textContent = data.export_target
+            ? (use7z && inQueue ? data.export_target.replace(/\.zip$/, ".7z") : data.export_target)
+            : "Export plan";
         sec.appendChild(h);
         const table = document.createElement("table");
         table.className = "rom-analysis-table";
         table.innerHTML = "<thead><tr><th>Step</th><th>Description</th></tr></thead>";
         const tbody = document.createElement("tbody");
-        for (const step of data.export_steps) {
+        for (const step of steps) {
             const tr = document.createElement("tr");
+            let desc = step.description;
+            if (inQueue && use7z && step.name === "zip_package") {
+                desc = desc.replace(/\.zip\b/g, ".7z");
+            }
             tr.innerHTML =
                 '<td class="type-badge">' + step.name + "</td>" +
-                "<td>" + step.description + "</td>";
+                "<td>" + esc(desc) + "</td>";
             tbody.appendChild(tr);
         }
         table.appendChild(tbody);
