@@ -765,6 +765,101 @@ tr.dg-row.dg-selected td {
     pointer-events: auto;
 }
 
+/* ---- ROM analysis modal ---- */
+.rom-analysis-panel {
+    max-width: 990px;
+    max-height: 92vh;
+    overflow-y: auto;
+}
+
+.ra-tabs {
+    display: flex;
+    border-bottom: 1px solid var(--pico-muted-border-color, #ccc);
+    margin-bottom: 1.25rem;
+}
+
+.ra-tab {
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    padding: 0.4rem 1.1rem;
+    margin-bottom: -1px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: var(--pico-muted-color);
+    transition: color 0.15s;
+}
+
+.ra-tab:hover { color: var(--pico-color); }
+
+.ra-tab.active {
+    color: var(--pico-primary);
+    border-bottom-color: var(--pico-primary);
+}
+
+.rom-analysis-meta {
+    display: flex;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+    font-size: 0.85rem;
+    margin-bottom: 1rem;
+    color: var(--pico-muted-color, #666);
+}
+
+.rom-analysis-meta span strong {
+    color: var(--pico-color);
+}
+
+.rom-analysis-section {
+    margin-bottom: 1.25rem;
+}
+
+.rom-analysis-section h6 {
+    margin-bottom: 0.5rem;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--pico-muted-color, #666);
+    border-bottom: 1px solid var(--pico-muted-border-color, #ccc);
+    padding-bottom: 0.25rem;
+}
+
+.rom-analysis-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.82rem;
+}
+
+.rom-analysis-table th {
+    text-align: left;
+    padding: 0.3rem 0.6rem;
+    background: var(--pico-table-row-stripped-background-color, rgba(0,0,0,0.05));
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.rom-analysis-table td {
+    padding: 0.3rem 0.6rem;
+    border-bottom: 1px solid var(--pico-muted-border-color, #eee);
+    vertical-align: middle;
+}
+
+.rom-analysis-table td.crc {
+    font-family: monospace;
+    font-size: 0.78rem;
+}
+
+.rom-analysis-table td.type-badge {
+    font-family: monospace;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
+.rom-analysis-table tr.primary-file td {
+    font-weight: 600;
+}
+
 /* ---- Settings layout ---- */
 .settings-layout {
     display: flex !important;

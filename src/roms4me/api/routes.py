@@ -4,6 +4,7 @@ import logging
 import platform
 import re
 import subprocess
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -15,11 +16,38 @@ from roms4me.core.config import add_dat_path as config_add_dat, add_rom_path as 
 from roms4me.core.config import load_config, remove_dat_path as config_remove_dat
 from roms4me.core.config import remove_rom_path as config_remove_rom
 from roms4me.core.database import get_session
-from roms4me.models.db import PrescanInfo, ScanMeta, ScanResult, System
+from roms4me.models.db import DatPath, PrescanInfo, RomPath, ScanMeta, ScanResult, System
 from roms4me.services.dat_parser import parse_dat_file, scan_dat_dir
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api")
+
+
+def _rom_type(rom_file: Path, accepted_exts: set[str] | None = None) -> str:
+    """Return the inner ROM extension for an archive, or the file's own extension.
+
+    For zip files, peeks at the central directory to find the primary ROM file
+    using the system's accepted extension whitelist. Falls back to the largest file.
+    Returns the extension without a leading dot, e.g. 'z64', 'sfc', 'zip'.
+    """
+    suffix = rom_file.suffix.lower()
+    if suffix == ".zip":
+        try:
+            with zipfile.ZipFile(rom_file) as zf:
+                entries = [e for e in zf.infolist() if not e.is_dir()]
+                if accepted_exts:
+                    candidates = [e for e in entries if Path(e.filename).suffix.lower() in accepted_exts]
+                    if not candidates:
+                        candidates = entries
+                else:
+                    candidates = entries
+                if candidates:
+                    best = max(candidates, key=lambda e: e.file_size)
+                    inner = Path(best.filename).suffix.lower().lstrip(".")
+                    return inner if inner else "zip"
+        except Exception:
+            pass
+    return suffix.lstrip(".")
 
 
 class _ResolvedPath:
@@ -509,6 +537,8 @@ def _do_prescan(scan, system_name: str | None = None):
                 ))
 
                 # Store per-game matches (use ROM system_id)
+                from roms4me.handlers.registry import get_rom_extensions
+                _accepted_exts = set(get_rom_extensions(dat.name)) or None
                 unmatched_count = 0
                 for gm in result.games:
                     if gm.unmatched:
@@ -518,11 +548,13 @@ def _do_prescan(scan, system_name: str | None = None):
                         status = "unverified"
                     else:
                         status = "missing"
+                    rom_file_path = Path(rp.path) / gm.matched_file if gm.matched_file else None
                     session.add(ScanResult(
                         system_id=rp.system_id,
                         game_name=gm.game_name,
                         description=gm.description,
                         file_name=gm.matched_file,
+                        rom_type=_rom_type(rom_file_path, _accepted_exts) if rom_file_path and rom_file_path.exists() else "",
                         expected_file_name=f"{gm.game_name}.zip" if not gm.unmatched else "",
                         status=status,
                         note=gm.note,
@@ -646,12 +678,16 @@ def _do_system_scan(scan, system_name: str):
                 missing = sum(1 for r in results if r.status == "missing")
                 other = len(results) - ok - missing
 
+                from roms4me.handlers.registry import get_rom_extensions
+                _scan_exts = set(get_rom_extensions(dat.name)) or None
                 for gr in results:
+                    gr_path = rom_dir / gr.file_name if gr.file_name else None
                     session.add(ScanResult(
                         system_id=system.id,
                         game_name=gr.name,
                         description=gr.description,
                         file_name=gr.file_name,
+                        rom_type=_rom_type(gr_path, _scan_exts) if gr_path and gr_path.exists() else "",
                         expected_file_name=gr.expected_file_name,
                         status=gr.status,
                     ))
@@ -680,6 +716,7 @@ def _do_system_scan(scan, system_name: str):
                             game_name=f.stem,
                             description=f.stem,
                             file_name=f.name,
+                            rom_type=_rom_type(f, _scan_exts),
                             expected_file_name="",
                             status="unmatched",
                             note=reason,
@@ -785,6 +822,13 @@ def _do_analyze(scan, system_name: str, files: list[str]):
         dat_path_entries = [dp for dp in all_dats if all_systems.get(dp.system_id) == matched_dat_system]
         dats = [parse_dat_file(Path(dp.path)) for dp in dat_path_entries if Path(dp.path).exists()]
 
+        total_dat_games = sum(len(d.games) for d in dats)
+        scan.info(f"DAT: {matched_dat_system} ({total_dat_games} games loaded)", color="blue")
+        if not dats:
+            scan.info("  No DAT files could be loaded — check DAT paths in Settings", color="red")
+            scan.finish("")
+            return
+
         matched_files: dict[str, str] = {}  # file_name -> matched game_name
 
         for i, filename in enumerate(files):
@@ -803,11 +847,16 @@ def _do_analyze(scan, system_name: str, files: list[str]):
                 scan.info(f"  File not found", color="red")
                 continue
 
-            # Run analysis against each DAT
+            # Run analysis against each DAT, surfacing any analyzer errors
             all_suggestions = []
+            rom_inner_type = ""  # populated from first analysis result
             for dat in dats:
                 analysis = analyze_rom(rom_file, dat, verify_crc=True)
                 all_suggestions.extend(analysis.suggestions)
+                if analysis.rom_inner_type and not rom_inner_type:
+                    rom_inner_type = analysis.rom_inner_type
+                for err in analysis.errors:
+                    scan.info(f"  Note: {err}", color="yellow")
 
             # Deduplicate and sort
             seen = set()
@@ -819,7 +868,16 @@ def _do_analyze(scan, system_name: str, files: list[str]):
 
             # Log results
             if not unique_suggestions:
-                scan.info(f"  No matches found")
+                from roms4me.analyzers.pipeline import _compute_crc
+                from roms4me.analyzers.n64_byteorder import _read_rom_data as _n64_read, detect_n64_format
+                crc = _compute_crc(rom_file)
+                diag = f"CRC: {crc}" if crc else "CRC: unknown"
+                rom_bytes = _n64_read(rom_file)
+                if rom_bytes:
+                    fmt = detect_n64_format(rom_bytes)
+                    if fmt:
+                        diag += f", N64 format detected: {fmt}"
+                scan.info(f"  No matches found ({diag})")
                 continue
 
             for s in unique_suggestions[:3]:
@@ -836,6 +894,28 @@ def _do_analyze(scan, system_name: str, files: list[str]):
                 else:
                     scan.info(f"  ? {s.dat_game_name}")
                     scan.info(f"        {s.reason}")
+
+            # If all suggestions are CRC mismatches, show N64 diagnostic
+            all_mismatch = unique_suggestions and all(s.crc_match is False for s in unique_suggestions)
+            if all_mismatch:
+                from roms4me.analyzers.n64_byteorder import (
+                    _read_rom_data as _n64_read,
+                    detect_n64_format,
+                    to_bigendian,
+                )
+                import zlib as _zlib
+                rom_bytes = _n64_read(rom_file)
+                if rom_bytes:
+                    fmt = detect_n64_format(rom_bytes)
+                    if fmt:
+                        scan.info(f"  N64 format detected: {fmt}", color="yellow")
+                        if fmt != "bigendian":
+                            normalized = to_bigendian(rom_bytes, fmt)
+                            norm_crc = f"{_zlib.crc32(normalized) & 0xFFFFFFFF:08x}"
+                            scan.info(f"  Normalized (BigEndian) CRC: {norm_crc}", color="yellow")
+                            scan.info(f"  Raw CRC: {unique_suggestions[0].actual_crc}", color="yellow")
+                    else:
+                        scan.info(f"  Not recognized as N64 ROM (magic: {rom_bytes[:4].hex()})", color="yellow")
 
             # Update DB and build export plan only for CRC matches
             best = unique_suggestions[0]
@@ -855,6 +935,17 @@ def _do_analyze(scan, system_name: str, files: list[str]):
                     for step in export_plan.steps:
                         scan.info(f"    {step.name}: {step.description}")
 
+            # Always update rom_type from analysis, even without a match
+            if rom_inner_type:
+                for row in session.exec(
+                    select(ScanResult).where(
+                        ScanResult.system_id == system.id,
+                        ScanResult.file_name == filename,
+                    )
+                ).all():
+                    row.rom_type = rom_inner_type
+                session.commit()
+
             if new_status:
                 all_for_file = session.exec(
                     select(ScanResult).where(
@@ -872,6 +963,8 @@ def _do_analyze(scan, system_name: str, files: list[str]):
                     existing.game_name = best.dat_game_name
                     existing.description = best.dat_game_name
                     existing.expected_file_name = f"{best.dat_game_name}.zip"
+                    if rom_inner_type:
+                        existing.rom_type = rom_inner_type
 
                     # Remove duplicate rows for the same file (other language variants)
                     for dup in all_for_file[1:]:
@@ -1291,6 +1384,7 @@ async def get_results(system_name: str, view: str = "owned") -> dict:
                 "game_name": r.game_name,
                 "description": r.description,
                 "file_name": r.file_name,
+                "rom_type": r.rom_type,
                 "expected_file_name": r.expected_file_name,
                 "status": r.status,
                 "note": r.note,
@@ -1316,4 +1410,86 @@ async def get_results(system_name: str, view: str = "owned") -> dict:
             "unmatched_count": len(unmatched),
             "missing_count": len(missing),
             "total_count": len(all_results),
+        }
+
+
+@router.get("/rom-details/{system_name}")
+async def rom_details(system_name: str, file: str) -> dict:
+    """Return ZIP contents and DB rows for a single ROM file.
+
+    Used by the 'View analysis' context menu to show embedded archive files
+    and what the database currently knows about each match candidate.
+    """
+    with get_session() as session:
+        system = session.exec(select(System).where(System.name == system_name)).first()
+        if not system:
+            raise HTTPException(status_code=404, detail="System not found")
+
+        _, all_roms = _resolve_paths(session)
+        rom_dirs = [Path(rp.path) for rp in all_roms if rp.system_id == system.id]
+
+        # Locate the file on disk
+        rom_file: Path | None = None
+        for rom_dir in rom_dirs:
+            candidate = rom_dir / file
+            if candidate.exists():
+                rom_file = candidate
+                break
+
+        file_size = rom_file.stat().st_size if rom_file else 0
+        file_type = Path(file).suffix.lower().lstrip(".")
+
+        # List embedded files for archives
+        embedded: list[dict] = []
+        archive_error: str = ""
+        if rom_file and file_type == "zip":
+            try:
+                with zipfile.ZipFile(rom_file) as zf:
+                    for info in zf.infolist():
+                        if not info.is_dir():
+                            inner_type = Path(info.filename).suffix.lower().lstrip(".")
+                            embedded.append({
+                                "name": info.filename,
+                                "type": inner_type,
+                                "size": info.file_size,
+                                "compress_size": info.compress_size,
+                                "crc": f"{info.CRC & 0xFFFFFFFF:08x}",
+                            })
+            except zipfile.BadZipFile:
+                archive_error = "Invalid ZIP file"
+
+        db_rows = session.exec(
+            select(ScanResult).where(
+                ScanResult.system_id == system.id,
+                ScanResult.file_name == file,
+            )
+        ).all()
+
+        # Inner ROM type: prefer DB value, fall back to inspecting embedded files
+        inner_rom_type = db_rows[0].rom_type if db_rows and db_rows[0].rom_type else ""
+        if not inner_rom_type and embedded:
+            # Pick the type of the largest embedded file
+            biggest = max(embedded, key=lambda e: e["size"])
+            inner_rom_type = biggest["type"]
+
+        return {
+            "file_name": file,
+            "exists": rom_file is not None,
+            "size": file_size,
+            "file_type": file_type,
+            "compressed": file_type in {"zip", "7z"},
+            "rom_type": inner_rom_type,
+            "embedded": embedded,
+            "archive_error": archive_error,
+            "db_rows": [
+                {
+                    "game_name": r.game_name,
+                    "description": r.description,
+                    "status": r.status,
+                    "note": r.note,
+                    "plan": r.plan or "",
+                    "rom_type": r.rom_type,
+                }
+                for r in db_rows
+            ],
         }

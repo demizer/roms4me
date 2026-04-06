@@ -650,6 +650,207 @@ async function processQueue(dest, regionPriority = []) {
 // Queue toolbar button
 document.getElementById("btn-queue").addEventListener("click", () => showQueue());
 
+function _fmtSize(bytes) {
+    if (!bytes) return "0 B";
+    const units = ["B", "KB", "MB", "GB"];
+    let i = 0;
+    let n = bytes;
+    while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+    return (i === 0 ? n : n.toFixed(1)) + " " + units[i];
+}
+
+async function showRomAnalysis(row) {
+    /** Open the ROM analysis modal with Data / Logs / Export tabs. */
+    const titleEl = document.getElementById("rom-analysis-title");
+    const bodyEl = document.getElementById("rom-analysis-body");
+    titleEl.textContent = row.file_name || "ROM Analysis";
+    bodyEl.innerHTML = '<p style="color:var(--pico-muted-color)">Loading…</p>';
+    Modal.open("rom-analysis-modal");
+
+    let data;
+    try {
+        data = await fetchJson(
+            "/api/rom-details/" + encodeURIComponent(currentSystem) +
+            "?file=" + encodeURIComponent(row.file_name)
+        );
+    } catch (e) {
+        bodyEl.innerHTML = '<p style="color:var(--pico-del-color)">' + e.message + "</p>";
+        return;
+    }
+
+    // ── Tab scaffold ────────────────────────────────────────────────────────
+    const frag = document.createDocumentFragment();
+    const tabBar = document.createElement("div");
+    tabBar.className = "ra-tabs";
+    const panes = {};
+
+    for (const [id, label] of [["data", "Data"], ["logs", "Logs"], ["export", "Export"]]) {
+        const btn = document.createElement("button");
+        btn.className = "ra-tab" + (id === "data" ? " active" : "");
+        btn.textContent = label;
+        btn.addEventListener("click", () => {
+            tabBar.querySelectorAll(".ra-tab").forEach(b => b.classList.toggle("active", b === btn));
+            Object.entries(panes).forEach(([k, p]) => { p.hidden = k !== id; });
+        });
+        tabBar.appendChild(btn);
+        const pane = document.createElement("div");
+        pane.className = "ra-tab-pane";
+        pane.hidden = id !== "data";
+        panes[id] = pane;
+    }
+    frag.appendChild(tabBar);
+    for (const pane of Object.values(panes)) frag.appendChild(pane);
+
+    // ── Data tab ────────────────────────────────────────────────────────────
+    const meta = document.createElement("div");
+    meta.className = "rom-analysis-meta";
+    const containerLabel = data.compressed
+        ? (data.file_type || "archive").toUpperCase() + " archive"
+        : (data.file_type || "—");
+    for (const [lbl, val] of [
+        ["File", data.file_name],
+        ["Container", containerLabel],
+        ["ROM format", data.rom_type || "—"],
+        ["Size", _fmtSize(data.size)],
+        ["On disk", data.exists ? "Yes" : "Not found"],
+    ]) {
+        const span = document.createElement("span");
+        span.innerHTML = "<strong>" + lbl + ":</strong> " + val;
+        meta.appendChild(span);
+    }
+    panes.data.appendChild(meta);
+
+    if (data.file_type === "zip" || data.file_type === "7z") {
+        const sec = document.createElement("div");
+        sec.className = "rom-analysis-section";
+        const h = document.createElement("h6");
+        h.textContent = "Archive contents (" + data.embedded.length + " file" + (data.embedded.length === 1 ? "" : "s") + ")";
+        sec.appendChild(h);
+        if (data.archive_error) {
+            const p = document.createElement("p");
+            p.style.color = "var(--pico-del-color)";
+            p.textContent = data.archive_error;
+            sec.appendChild(p);
+        } else if (data.embedded.length === 0) {
+            const p = document.createElement("p");
+            p.style.color = "var(--pico-muted-color)";
+            p.textContent = "Empty archive.";
+            sec.appendChild(p);
+        } else {
+            const table = document.createElement("table");
+            table.className = "rom-analysis-table";
+            table.innerHTML = "<thead><tr><th>Name</th><th>Type</th><th>Size</th><th>Compressed</th><th>CRC</th></tr></thead>";
+            const tbody = document.createElement("tbody");
+            const romExts = new Set(["z64","v64","n64","sfc","smc","nes","gba","gbc","gb","md","smd","bin","iso","chd","cue","img","cdi"]);
+            const sorted = [...data.embedded].sort((a, b) => (romExts.has(a.type) ? 0 : 1) - (romExts.has(b.type) ? 0 : 1));
+            for (const f of sorted) {
+                const tr = document.createElement("tr");
+                if (romExts.has(f.type)) tr.className = "primary-file";
+                tr.innerHTML =
+                    "<td>" + f.name + "</td>" +
+                    '<td class="type-badge">' + (f.type || "—") + "</td>" +
+                    "<td>" + _fmtSize(f.size) + "</td>" +
+                    "<td>" + _fmtSize(f.compress_size) + "</td>" +
+                    '<td class="crc">' + f.crc + "</td>";
+                tbody.appendChild(tr);
+            }
+            table.appendChild(tbody);
+            sec.appendChild(table);
+        }
+        panes.data.appendChild(sec);
+    }
+
+    if (data.db_rows && data.db_rows.length > 0) {
+        const sec = document.createElement("div");
+        sec.className = "rom-analysis-section";
+        const h = document.createElement("h6");
+        h.textContent = "DAT match candidates (" + data.db_rows.length + ")";
+        sec.appendChild(h);
+        const table = document.createElement("table");
+        table.className = "rom-analysis-table";
+        table.innerHTML = "<thead><tr><th>Game</th><th>Status</th><th>Plan</th><th>Note</th></tr></thead>";
+        const tbody = document.createElement("tbody");
+        for (const r of data.db_rows) {
+            const tr = document.createElement("tr");
+            tr.innerHTML =
+                "<td>" + (r.description || r.game_name) + "</td>" +
+                "<td>" + (r.status || "—") + "</td>" +
+                "<td>" + (r.plan || "—") + "</td>" +
+                "<td>" + (r.note || "—") + "</td>";
+            tbody.appendChild(tr);
+        }
+        table.appendChild(tbody);
+        sec.appendChild(table);
+        panes.data.appendChild(sec);
+    }
+
+    // ── Logs tab ────────────────────────────────────────────────────────────
+    const verifyLog = document.getElementById("verify-log");
+    if (verifyLog && verifyLog.textContent.trim()) {
+        const logClone = verifyLog.cloneNode(true);
+        logClone.style.fontSize = "0.78rem";
+        panes.logs.appendChild(logClone);
+    } else {
+        const p = document.createElement("p");
+        p.style.color = "var(--pico-muted-color)";
+        p.textContent = "No analysis log available. Run analysis to populate this tab.";
+        panes.logs.appendChild(p);
+    }
+
+    // ── Export tab ──────────────────────────────────────────────────────────
+    const exportLoading = document.createElement("p");
+    exportLoading.style.color = "var(--pico-muted-color)";
+    exportLoading.textContent = "Loading…";
+    panes.export.appendChild(exportLoading);
+
+    if (currentSystem) {
+        fetchJson("/api/analyze/" + encodeURIComponent(currentSystem), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ files: [row.file_name] }),
+        }).then((resp) => {
+            panes.export.innerHTML = "";
+            let hasSteps = false;
+            for (const result of (resp.results || [])) {
+                if (!result.export_plan || result.export_plan.steps.length === 0) continue;
+                hasSteps = true;
+                const sec = document.createElement("div");
+                sec.className = "rom-analysis-section";
+                const h = document.createElement("h6");
+                h.textContent = result.export_plan.target_name;
+                sec.appendChild(h);
+                const table = document.createElement("table");
+                table.className = "rom-analysis-table";
+                table.innerHTML = "<thead><tr><th>Step</th><th>Description</th></tr></thead>";
+                const tbody = document.createElement("tbody");
+                for (const step of result.export_plan.steps) {
+                    const tr = document.createElement("tr");
+                    tr.innerHTML =
+                        '<td class="type-badge">' + step.name + "</td>" +
+                        "<td>" + step.description + "</td>";
+                    tbody.appendChild(tr);
+                }
+                table.appendChild(tbody);
+                sec.appendChild(table);
+                panes.export.appendChild(sec);
+            }
+            if (!hasSteps) {
+                const p = document.createElement("p");
+                p.style.color = "var(--pico-muted-color)";
+                p.textContent = "No export steps needed.";
+                panes.export.appendChild(p);
+            }
+        }).catch((e) => {
+            panes.export.innerHTML = '<p style="color:var(--pico-del-color)">Error: ' + e.message + "</p>";
+        });
+    } else {
+        panes.export.innerHTML = '<p style="color:var(--pico-muted-color)">No system selected.</p>';
+    }
+
+    bodyEl.innerHTML = "";
+    bodyEl.appendChild(frag);
+}
+
 function showExportPlan(row) {
     /** Show the export plan for a ROM in the verify log panel. */
     const verifyPanel = document.getElementById("verify-panel");
@@ -696,6 +897,7 @@ const gameGrid = new DataGrid("game-grid", {
     columns: [
         { key: "description", label: "Game", width: 250, autoWidth: true, maxAutoWidth: 400, minChars: 30 },
         { key: "status", label: "Status", width: 100, autoWidth: true, minChars: 5, align: "center" },
+        { key: "rom_type", label: "Type", width: 55, align: "center" },
         { key: "file_name", label: "File name", width: 300, minChars: 20 },
         { key: "plan", label: "Plan", width: 80, align: "center", render: renderPlanCell },
         { key: "note", label: "Note", width: 300, minChars: 15 },
@@ -708,6 +910,13 @@ const gameGrid = new DataGrid("game-grid", {
     },
     onContextMenu: (rows) => {
         const items = [];
+        // "View analysis" only makes sense for a single file row
+        if (rows.length === 1 && rows[0].file_name) {
+            items.push({
+                label: "View analysis",
+                action: (rows) => showRomAnalysis(rows[0]),
+            });
+        }
         items.push({
             label: "Add to Queue",
             action: (rows) => addToQueue(rows),
