@@ -2,6 +2,7 @@
 
 import logging
 import platform
+import re
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -963,7 +964,7 @@ async def get_matched_dats(system_name: str) -> list[dict]:
 async def update_results(system_name: str, req: dict) -> dict:
     """Update plan field for one or more rows.
 
-    Expects {"files": ["file1.zip", ...], "plan": "delete"}.
+    Expects {"files": ["file1.zip", ...], "plan": "exclude"}.
     """
     files = req.get("files", [])
     plan = req.get("plan", "")
@@ -989,6 +990,255 @@ async def update_results(system_name: str, req: dict) -> dict:
         session.commit()
 
     return {"updated": updated}
+
+
+@router.post("/export/{system_name}")
+async def export_roms(system_name: str, req: dict) -> dict:
+    """Export ROMs to a destination directory.
+
+    Expects {"files": ["file1.zip", ...], "dest": "/media/user/sdcard/SNES"}.
+    Poll /api/refresh/status for progress.
+    """
+    import threading
+
+    import roms4me.core.scan_log as scan_log_mod
+    from roms4me.core.scan_log import ScanLog
+
+    files = list(dict.fromkeys(req.get("files", [])))
+    dest = req.get("dest", "").strip()
+    region_priority = [r.strip() for r in req.get("region_priority", []) if r.strip()]
+
+    if not files:
+        raise HTTPException(status_code=400, detail="No files specified")
+    if not dest:
+        raise HTTPException(status_code=400, detail="No destination path specified")
+
+    if scan_log_mod.scan_running:
+        return {"status": "already_running"}
+
+    scan = ScanLog()
+    scan_log_mod.current_scan = scan
+    scan_log_mod.scan_running = True
+
+    def run():
+        try:
+            _do_export(scan, system_name, files, Path(dest), region_priority)
+        finally:
+            scan_log_mod.scan_running = False
+
+    threading.Thread(target=run, daemon=True).start()
+    return {"status": "started"}
+
+
+def _extract_base_name(game_name: str) -> str:
+    """Return the title portion of a No-Intro game name (before first parenthetical)."""
+    m = re.match(r"^([^(]+)", game_name)
+    return m.group(1).strip() if m else game_name.strip()
+
+
+def _extract_region(game_name: str) -> str:
+    """Return the first parenthetical of a No-Intro game name (typically the region)."""
+    m = re.search(r"\(([^)]+)\)", game_name)
+    return m.group(1) if m else ""
+
+
+def _apply_region_priority(
+    files_with_names: list[tuple[str, str]], region_priority: list[str]
+) -> set[str]:
+    """Return filenames to skip based on region preference.
+
+    For each base-title group with more than one file, keeps the best-ranked
+    region match and auto-excludes the rest.  Files with no priority match are
+    treated as lowest priority.
+    """
+    if not region_priority:
+        return set()
+
+    groups: dict[str, list[tuple[str, str]]] = {}
+    for filename, game_name in files_with_names:
+        base = _extract_base_name(game_name)
+        groups.setdefault(base, []).append((filename, game_name))
+
+    def _score(item: tuple[str, str]) -> int:
+        region = _extract_region(item[1])
+        for idx, pref in enumerate(region_priority):
+            if pref.lower() in region.lower():
+                return idx
+        return len(region_priority)
+
+    auto_excluded: set[str] = set()
+    for group in groups.values():
+        if len(group) <= 1:
+            continue
+        best = min(_score(item) for item in group)
+        for filename, game_name in group:
+            if _score((filename, game_name)) > best:
+                auto_excluded.add(filename)
+
+    return auto_excluded
+
+
+def _do_export(scan, system_name: str, files: list[str], dest_dir: Path, region_priority: list[str] | None = None):
+    """Execute exports for selected ROMs (called from background thread)."""
+    from roms4me.analyzers.base import Suggestion
+    from roms4me.exporters.executor import execute_export
+    from roms4me.exporters.planner import plan_export
+    from roms4me.services.system_matcher import match_system
+
+    region_priority = region_priority or []
+    scan.info(f"Exporting {len(files)} ROM(s) to {dest_dir}...", color="blue")
+
+    with get_session() as session:
+        system = session.exec(select(System).where(System.name == system_name)).first()
+        if not system:
+            scan.info("System not found", color="red")
+            scan.finish("")
+            return
+
+        all_dats, all_roms = _resolve_paths(session)
+        rom_dirs = [Path(rp.path) for rp in all_roms if rp.system_id == system.id]
+
+        all_systems = {s.id: s.name for s in session.exec(select(System)).all()}
+        dat_system_names = list({all_systems.get(dp.system_id, "") for dp in all_dats})
+        matched_dat_system = match_system(system_name, dat_system_names)
+
+        if not matched_dat_system:
+            scan.info("No matching DAT found", color="red")
+            scan.finish("")
+            return
+
+        dat_path_entries = [dp for dp in all_dats if all_systems.get(dp.system_id) == matched_dat_system]
+        dats = [parse_dat_file(Path(dp.path)) for dp in dat_path_entries if Path(dp.path).exists()]
+
+        # Build region-priority auto-exclude set before the main loop
+        auto_excluded_region: set[str] = set()
+        if region_priority:
+            files_with_names = []
+            for fn in files:
+                row = session.exec(
+                    select(ScanResult).where(
+                        ScanResult.system_id == system.id,
+                        ScanResult.file_name == fn,
+                        ScanResult.status == "matched",
+                    )
+                ).first()
+                if row:
+                    files_with_names.append((fn, row.game_name))
+            auto_excluded_region = _apply_region_priority(files_with_names, region_priority)
+            if auto_excluded_region:
+                scan.info(
+                    f"Region filter ({', '.join(region_priority)}): {len(auto_excluded_region)} lower-priority version(s) will be skipped",
+                    color="blue",
+                )
+
+        exported = 0
+        duplicates = 0
+        excluded = 0
+        failed = 0
+
+        for i, filename in enumerate(files):
+            pct = round((i + 1) / len(files) * 100)
+            scan.info(f"[{i + 1}/{len(files)}] ({pct}%) {filename}", color="blue")
+
+            if filename in auto_excluded_region:
+                scan.info(f"  Region-excluded (prefer {', '.join(region_priority)})", color="yellow")
+                excluded += 1
+                continue
+
+            # Use stored match from DB — no need to re-analyze
+            result_row = session.exec(
+                select(ScanResult).where(
+                    ScanResult.system_id == system.id,
+                    ScanResult.file_name == filename,
+                    ScanResult.status == "matched",
+                )
+            ).first()
+
+            if not result_row:
+                # Look up actual status for a better error message
+                any_row = session.exec(
+                    select(ScanResult).where(
+                        ScanResult.system_id == system.id,
+                        ScanResult.file_name == filename,
+                    )
+                ).first()
+                if any_row:
+                    if any_row.plan == "exclude":
+                        scan.info("  Excluded", color="yellow")
+                        excluded += 1
+                    elif any_row.status == "duplicate":
+                        scan.info("  Skipped (duplicate)", color="yellow")
+                        duplicates += 1
+                    else:
+                        reason = {
+                            "unmatched": "no CRC match in DAT (fan translation, hack, or bad dump)",
+                            "unverified": "run Analyze first",
+                            "ok": "run Analyze first",
+                        }.get(any_row.status, f"status: {any_row.status}")
+                        scan.info(f"  Skipped ({reason})", color="yellow")
+                        failed += 1
+                else:
+                    scan.info("  Not in database — run Scan first", color="red")
+                    failed += 1
+                continue
+
+            if result_row.plan == "exclude":
+                scan.info("  Excluded", color="yellow")
+                excluded += 1
+                continue
+
+            # Find the source file on disk
+            rom_file = None
+            for rom_dir in rom_dirs:
+                candidate = rom_dir / filename
+                if candidate.exists():
+                    rom_file = candidate
+                    break
+
+            if not rom_file:
+                scan.info("  File not found on disk", color="red")
+                failed += 1
+                continue
+
+            # Reconstruct a minimal suggestion from stored game_name
+            suggestion = Suggestion(
+                dat_game_name=result_row.game_name,
+                confidence=1.0,
+                reason="",
+                crc_match=True,
+            )
+
+            # Build export plan (fast — reads ROM and runs fixers)
+            export_plan = None
+            for dat in dats:
+                ep = plan_export(rom_file, suggestion, dat)
+                if ep:
+                    export_plan = ep
+                    break
+
+            if not export_plan:
+                scan.info("  Could not build export plan", color="red")
+                failed += 1
+                continue
+
+            try:
+                out_path = execute_export(rom_file, export_plan, dest_dir)
+                scan.info(f"  → {out_path.name}", color="green")
+                exported += 1
+            except OSError as e:
+                scan.info(f"  Export failed: {e}", color="red")
+                failed += 1
+
+        parts = [f"{exported} exported"]
+        if duplicates:
+            parts.append(f"{duplicates} duplicates skipped")
+        if excluded:
+            parts.append(f"{excluded} excluded")
+        if failed:
+            parts.append(f"{failed} failed")
+        color = "green" if failed == 0 else "yellow"
+        scan.info(f"Export complete: {', '.join(parts)}", color=color)
+        scan.finish("")
 
 
 @router.get("/results/{system_name}")

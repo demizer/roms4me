@@ -235,7 +235,7 @@ async function selectSystem(systemName) {
         // Toolbar buttons
         const analyzeBtn = document.getElementById("btn-analyze");
         const exportBtn = document.getElementById("btn-add-queue");
-        const deleteBtn = document.getElementById("btn-delete");
+        const deleteBtn = document.getElementById("btn-exclude");
         analyzeBtn.disabled = true;
         exportBtn.disabled = true;
 
@@ -247,7 +247,7 @@ async function selectSystem(systemName) {
         };
         deleteBtn.onclick = () => {
             const rows = gameGrid.getSelectedRows();
-            if (rows.length > 0) setRowPlan(rows, "delete");
+            if (rows.length > 0) setRowPlan(rows, "exclude");
         };
 
         // Grid data — all rows, default filter hides "missing"
@@ -261,7 +261,7 @@ async function selectSystem(systemName) {
             exportBtn.disabled = n === 0;
             exportBtn.textContent = n > 0 ? "Add to Queue (" + n + ")" : "Add to Queue";
             deleteBtn.hidden = n === 0;
-            deleteBtn.textContent = "Delete (" + n + ")";
+            deleteBtn.textContent = "Exclude (" + n + ")";
         };
 
         setStatus(systemName + " (" + resultData.owned_count + " owned, " + resultData.missing_count + " missing)");
@@ -413,9 +413,9 @@ function renderPlanCell(td, val, row) {
     } else if (val === "ok") {
         td.textContent = "ok";
         td.classList.add("plan-ok");
-    } else if (val === "delete") {
-        td.textContent = "delete";
-        td.classList.add("plan-delete");
+    } else if (val === "exclude") {
+        td.textContent = "exclude";
+        td.classList.add("plan-exclude");
     } else {
         td.textContent = val;
     }
@@ -514,14 +514,49 @@ function showQueue() {
         }
     }
 
-    // Add process and clear buttons
+    // Region priority input
+    const regionRow = document.createElement("div");
+    regionRow.style.cssText = "display:flex;gap:0.5rem;padding:0.5rem 0.5rem 0;align-items:center;";
+    const regionLabel = document.createElement("label");
+    regionLabel.textContent = "Region priority:";
+    regionLabel.style.cssText = "font-size:0.8rem;white-space:nowrap;margin:0;";
+    const regionInput = document.createElement("input");
+    regionInput.type = "text";
+    regionInput.value = "USA, World, Europe, Japan";
+    regionInput.placeholder = "USA, World, Europe, Japan";
+    regionInput.title = "When multiple versions of the same game are queued, prefer this region order. Leave blank to export all.";
+    regionInput.style.cssText = "font-size:0.8rem;padding:0.2rem 0.4rem;margin:0;flex:1;";
+    regionRow.appendChild(regionLabel);
+    regionRow.appendChild(regionInput);
+    verifyLog.appendChild(regionRow);
+
+    // Destination path input
+    const destRow = document.createElement("div");
+    destRow.style.cssText = "display:flex;gap:0.5rem;padding:0.5rem 0.5rem 0;align-items:center;";
+    const destLabel = document.createElement("label");
+    destLabel.textContent = "Export to:";
+    destLabel.style.cssText = "font-size:0.8rem;white-space:nowrap;margin:0;";
+    const destInput = document.createElement("input");
+    destInput.type = "text";
+    destInput.placeholder = "/media/user/sdcard/Nintendo - SNES";
+    destInput.style.cssText = "font-size:0.8rem;padding:0.2rem 0.4rem;margin:0;flex:1;";
+    destRow.appendChild(destLabel);
+    destRow.appendChild(destInput);
+    verifyLog.appendChild(destRow);
+
+    // Process and clear buttons
     const btnRow = document.createElement("div");
     btnRow.style.cssText = "display:flex;gap:0.5rem;padding:0.5rem;";
     const processBtn = document.createElement("button");
     processBtn.className = "outline";
     processBtn.textContent = "Process Queue";
     processBtn.style.cssText = "font-size:0.8rem;padding:0.25rem 0.75rem;margin:0;";
-    processBtn.addEventListener("click", () => processQueue());
+    processBtn.addEventListener("click", () => {
+        const regionPriority = regionInput.value.trim()
+            ? regionInput.value.split(",").map((s) => s.trim()).filter(Boolean)
+            : [];
+        processQueue(destInput.value.trim(), regionPriority);
+    });
     const clearBtn = document.createElement("button");
     clearBtn.className = "outline secondary";
     clearBtn.textContent = "Clear Queue";
@@ -536,22 +571,78 @@ function showQueue() {
     verifyLog.appendChild(btnRow);
 }
 
-async function processQueue() {
-    /** Process the export queue — placeholder for actual export logic. */
-    const verifyLog = document.getElementById("verify-log");
-    verifyLog.innerHTML = "";
-    appendScanLogLine(verifyLog, "[blue]Processing " + exportQueue.length + " item(s)...");
+async function pollUntilDone(verifyLog) {
+    /** Poll /api/refresh/status until done, appending lines to verifyLog. */
+    return new Promise((resolve, reject) => {
+        let transientEl = null;
+        const interval = setInterval(async () => {
+            try {
+                const status = await fetchJson("/api/refresh/status");
+                for (const msg of status.messages) {
+                    if (msg.transient) {
+                        if (!transientEl) {
+                            transientEl = document.createElement("div");
+                            transientEl.className = "log-line log-progress";
+                            verifyLog.appendChild(transientEl);
+                        }
+                        transientEl.textContent = msg.text.replace(/^\[(green|yellow|red|blue)\]/, "");
+                    } else {
+                        if (transientEl) { transientEl.remove(); transientEl = null; }
+                        appendScanLogLine(verifyLog, msg.text);
+                    }
+                }
+                verifyLog.scrollTop = verifyLog.scrollHeight;
+                if (status.done) {
+                    clearInterval(interval);
+                    resolve();
+                }
+            } catch (e) {
+                clearInterval(interval);
+                reject(e);
+            }
+        }, 500);
+    });
+}
 
-    for (let i = 0; i < exportQueue.length; i++) {
-        const item = exportQueue[i];
-        appendScanLogLine(verifyLog, "[" + (i + 1) + "/" + exportQueue.length + "] " + item.game_name);
-        appendScanLogLine(verifyLog, "  System: " + item.system);
-        if (item.plan) appendScanLogLine(verifyLog, "  Plan: " + item.plan);
-        // TODO: call export API when implemented
-        appendScanLogLine(verifyLog, "  [yellow]Export not yet implemented");
+async function processQueue(dest, regionPriority = []) {
+    /** Export queued ROMs to dest — calls /api/export per system. */
+    const verifyLog = document.getElementById("verify-log");
+
+    if (!dest) {
+        verifyLog.innerHTML = "";
+        appendScanLogLine(verifyLog, "[red]Please enter a destination path");
+        return;
     }
 
-    appendScanLogLine(verifyLog, "[green]Queue processing complete");
+    verifyLog.innerHTML = "";
+    appendScanLogLine(verifyLog, "[blue]Exporting " + exportQueue.length + " item(s) to " + dest + "...");
+
+    // Group by system, preserving insertion order
+    const bySystem = {};
+    for (const item of exportQueue) {
+        bySystem[item.system] = bySystem[item.system] || [];
+        bySystem[item.system].push(item);
+    }
+
+    for (const [system, items] of Object.entries(bySystem)) {
+        const files = items.map((i) => i.file_name);
+        try {
+            const start = await fetchJson("/api/export/" + encodeURIComponent(system), {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ files, dest, region_priority: regionPriority }),
+            });
+            if (start.status === "already_running") {
+                appendScanLogLine(verifyLog, "[red]A task is already running — please wait and try again");
+                return;
+            }
+            await pollUntilDone(verifyLog);
+        } catch (e) {
+            appendScanLogLine(verifyLog, "[red]Error: " + e.message);
+            return;
+        }
+    }
+
     exportQueue.length = 0;
     updateQueueButton();
 }
@@ -612,7 +703,7 @@ const gameGrid = new DataGrid("game-grid", {
     rowClassFn: (row) => {
         const classes = [];
         if (row.status && row.status !== "-") classes.push("status-" + row.status);
-        if (row.plan === "delete") classes.push("plan-row-delete");
+        if (row.plan === "exclude") classes.push("plan-row-exclude");
         return classes.join(" ") || null;
     },
     onContextMenu: (rows) => {
@@ -622,8 +713,8 @@ const gameGrid = new DataGrid("game-grid", {
             action: (rows) => addToQueue(rows),
         });
         items.push({
-            label: "Delete",
-            action: (rows) => setRowPlan(rows, "delete"),
+            label: "Exclude",
+            action: (rows) => setRowPlan(rows, "exclude"),
         });
         // Allow clearing the plan
         if (rows.some((r) => r.plan)) {
