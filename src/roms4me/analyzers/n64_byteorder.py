@@ -97,7 +97,13 @@ class N64ByteOrderAnalyzer:
         return []
 
     def analyze_file(self, rom_path: Path, dat: DatFile) -> list[Suggestion]:
-        """Read ROM, detect byte order, normalize to BigEndian, lookup CRC in DAT."""
+        """Read ROM, try all N64 byte-order conversions, lookup normalized CRC in DAT.
+
+        Tries both ByteSwapped→BigEndian and LittleEndian→BigEndian conversions
+        regardless of the detected format.  This handles ROMs whose magic bytes
+        disagree with their file extension (e.g. a .v64 that magic-detects as
+        BigEndian) by exhaustively checking all interpretations.
+        """
         from roms4me.handlers.registry import get_rom_extensions
         # Include all N64 format variants so zips with .v64/.n64 are found
         accepted = set(get_rom_extensions(dat.name)) or None
@@ -106,40 +112,51 @@ class N64ByteOrderAnalyzer:
             return []
 
         fmt = detect_n64_format(rom_data)
-        if fmt is None or fmt == "bigendian":
-            # Not N64, or already BigEndian — CrcLookupAnalyzer handles this
-            return []
+        if fmt is None:
+            return []  # Not an N64 ROM — magic bytes don't match any N64 format
 
-        normalized = to_bigendian(rom_data, fmt)
-        normalized_crc = f"{zlib.crc32(normalized) & 0xFFFFFFFF:08x}"
-
-        # Build CRC → game lookup
+        # Build CRC → game lookup once
         crc_to_game: dict[str, list] = {}
         for game in dat.games:
             for rom in game.roms:
                 if rom.crc:
                     crc_to_game.setdefault(rom.crc.lower(), []).append(game)
 
-        if normalized_crc not in crc_to_game:
-            return []
-
-        label = _FORMAT_LABEL.get(fmt, fmt)
         original_crc = f"{zlib.crc32(rom_data) & 0xFFFFFFFF:08x}"
+        label = _FORMAT_LABEL.get(fmt, fmt)
+        suggestions: list[Suggestion] = []
+        tried_crcs: set[str] = {original_crc}  # skip raw CRC — CrcLookupAnalyzer handles it
 
-        suggestions = []
-        for game in crc_to_game[normalized_crc]:
-            suggestions.append(Suggestion(
-                dat_game_name=game.name,
-                confidence=1.0,
-                reason=(
-                    f"ROM detected as {label}. "
-                    f"All three N64 formats (.z64/.v64/.n64) contain identical data in different byte orders; "
-                    f"Big Endian (.z64) is the No-Intro standard and compresses best. "
-                    f"CRC verified after normalizing to Big Endian: {normalized_crc} (raw: {original_crc})."
-                ),
-                expected_crc=normalized_crc,
-                actual_crc=original_crc,
-                crc_match=True,
-                action="rename",
-            ))
+        # Try every non-BigEndian interpretation and normalize to BigEndian.
+        # "byteswapped" swaps byte pairs; "littleendian" reverses 4-byte groups.
+        # This catches ROMs whose detected format disagrees with their content
+        # (e.g. wrong extension, non-standard magic bytes, partially converted dumps).
+        for try_fmt in ("byteswapped", "littleendian"):
+            normalized = to_bigendian(rom_data, try_fmt)
+            norm_crc = f"{zlib.crc32(normalized) & 0xFFFFFFFF:08x}"
+
+            if norm_crc in tried_crcs:
+                continue
+            tried_crcs.add(norm_crc)
+
+            if norm_crc not in crc_to_game:
+                continue
+
+            for game in crc_to_game[norm_crc]:
+                suggestions.append(Suggestion(
+                    dat_game_name=game.name,
+                    confidence=1.0,
+                    reason=(
+                        f"ROM detected as {label}. "
+                        f"CRC verified after treating as {_FORMAT_LABEL.get(try_fmt, try_fmt)} "
+                        f"and normalizing to Big Endian: {norm_crc} (raw: {original_crc}). "
+                        f"All three N64 formats (.z64/.v64/.n64) hold identical data in different "
+                        f"byte orders; Big Endian (.z64) is the No-Intro standard."
+                    ),
+                    expected_crc=norm_crc,
+                    actual_crc=original_crc,
+                    crc_match=True,
+                    action="rename",
+                ))
+
         return suggestions

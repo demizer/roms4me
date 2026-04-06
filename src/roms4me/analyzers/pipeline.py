@@ -172,13 +172,18 @@ def _compute_stripped_crcs(rom_path: Path, accepted_exts: set[str] | None = None
         stripped_crc = f"{zlib.crc32(rom_data[header_size:]) & 0xFFFFFFFF:08x}"
         result[stripped_crc] = header_desc
 
-    # N64 byte-order normalization
+    # N64 byte-order normalization — try all interpretations for detected N64 ROMs.
+    # This mirrors N64ByteOrderAnalyzer and handles mismatches between magic bytes
+    # and file extension (e.g. a BigEndian-magic ROM stored with a .v64 extension).
     fmt = detect_n64_format(rom_data)
-    if fmt and fmt != "bigendian":
-        normalized = to_bigendian(rom_data, fmt)
-        normalized_crc = f"{zlib.crc32(normalized) & 0xFFFFFFFF:08x}"
-        label = _FORMAT_LABEL.get(fmt, fmt)
-        result[normalized_crc] = f"N64 {label} → BigEndian conversion"
+    if fmt:
+        raw_crc = f"{zlib.crc32(rom_data) & 0xFFFFFFFF:08x}"
+        for try_fmt in ("byteswapped", "littleendian"):
+            normalized = to_bigendian(rom_data, try_fmt)
+            norm_crc = f"{zlib.crc32(normalized) & 0xFFFFFFFF:08x}"
+            if norm_crc != raw_crc and norm_crc not in result:
+                label = _FORMAT_LABEL.get(try_fmt, try_fmt)
+                result[norm_crc] = f"N64 treated as {label} → BigEndian conversion"
 
     return result
 
