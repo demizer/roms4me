@@ -834,6 +834,7 @@ def _do_analyze(scan, system_name: str, files: list[str]):
         for i, filename in enumerate(files):
             pct = round((i + 1) / len(files) * 100)
             scan.info(f"[{i + 1}/{len(files)}] ({pct}%) {filename}", color="blue")
+            file_log_start = len(scan.lines)
 
             # Find the actual file on disk
             rom_file = None
@@ -985,6 +986,18 @@ def _do_analyze(scan, system_name: str, files: list[str]):
                         "note": existing.note,
                         "plan": existing.plan or "",
                     })
+
+            # Persist per-file log lines to every ScanResult row for this file
+            file_log = "\n".join(scan.lines[file_log_start:])
+            if file_log:
+                for row in session.exec(
+                    select(ScanResult).where(
+                        ScanResult.system_id == system.id,
+                        ScanResult.file_name == filename,
+                    )
+                ).all():
+                    row.log = file_log
+                session.commit()
 
         # Deduplicate: when multiple files match the same DAT game, keep the best one
         # (fewest export steps = closest to target format, prefer "ok" over "modify")
@@ -1524,6 +1537,7 @@ async def rom_details(system_name: str, file: str) -> dict:
             "archive_error": archive_error,
             "export_steps": export_steps,
             "export_target": export_target,
+            "log": db_rows[0].log if db_rows else "",
             "db_rows": [
                 {
                     "game_name": r.game_name,

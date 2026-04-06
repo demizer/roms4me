@@ -673,9 +673,6 @@ async function showRomAnalysis(row) {
     const verifyLog = document.getElementById("verify-log");
     const header = verifyPanel.querySelector("#verify-panel-header strong");
 
-    // Snapshot the current log content for the Logs tab before we replace it
-    const logSnapshot = verifyLog.cloneNode(true);
-
     header.textContent = row.file_name || "ROM Analysis";
     verifyPanel.hidden = false;
     verifyLog.innerHTML = '<div class="ra-panel-view"><p style="color:var(--pico-muted-color)">Loading…</p></div>';
@@ -801,10 +798,13 @@ async function showRomAnalysis(row) {
     }
 
     // ── Logs tab ────────────────────────────────────────────────────────────
-    if (logSnapshot && logSnapshot.textContent.trim()) {
-        logSnapshot.style.fontSize = "0.78rem";
-        logSnapshot.style.background = "none";
-        panes.logs.appendChild(logSnapshot);
+    if (data.log && data.log.trim()) {
+        const pre = document.createElement("pre");
+        pre.style.fontSize = "0.78rem";
+        pre.style.whiteSpace = "pre-wrap";
+        pre.style.wordBreak = "break-word";
+        pre.textContent = data.log.replace(/^\[[\w]+\]/gm, "");  // strip color tags
+        panes.logs.appendChild(pre);
     } else {
         const p = document.createElement("p");
         p.style.color = "var(--pico-muted-color)";

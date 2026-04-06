@@ -41,6 +41,7 @@ class ScanResult(SQLModel, table=True):
     status: str = ""  # ok, missing, bad_dump, checksum_mismatch, size_mismatch, unmatched, matched
     note: str = ""  # explanation for unmatched items
     plan: str = ""  # export plan summary (e.g., "modify", "rename", "ok")
+    log: str = ""  # raw analysis log lines for this file
 
 
 class PrescanInfo(SQLModel, table=True):
