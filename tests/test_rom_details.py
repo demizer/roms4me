@@ -281,3 +281,136 @@ def test_rom_details_not_on_disk(_detail_env):
     assert data["exists"] is False
     assert data["size"] == 0
     assert data["embedded"] == []
+
+
+def test_rom_details_returns_log_from_db(_detail_env):
+    """rom_details returns the log field stored in ScanResult."""
+    tmp_path, app_dir = _detail_env
+    rom_dir = tmp_path / "roms"
+    rom_dir.mkdir()
+
+    rom_data = b"\x80\x37" + b"\xCC" * 512
+    zip_path = _make_zip_with_files(
+        rom_dir / "Game (USA).zip",
+        [("Game (USA).z64", rom_data)],
+    )
+
+    from roms4me.core.database import get_session
+    from roms4me.models.db import ScanResult
+    from sqlmodel import select
+
+    client, system_name, system_id, _fake_resolve = _make_client(tmp_path, rom_dir)
+
+    expected_log = "[1/1] (100%) Game (USA).zip\n  ✓ Game (USA)\n        CRC MATCH: 76a97201"
+
+    # Seed a ScanResult with a pre-saved log
+    with get_session() as session:
+        sr = ScanResult(
+            system_id=system_id,
+            game_name="Game (USA)",
+            file_name="Game (USA).zip",
+            status="matched",
+            log=expected_log,
+        )
+        session.add(sr)
+        session.commit()
+
+    from roms4me.api import routes as routes_mod
+
+    with patch.object(routes_mod, "_resolve_paths", _fake_resolve):
+        resp = client.get(
+            f"/api/rom-details/{system_name}",
+            params={"file": "Game (USA).zip"},
+        )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["log"] == expected_log
+
+
+def test_analyze_saves_per_file_log(_detail_env):
+    """_do_analyze writes per-file log lines into ScanResult.log."""
+    tmp_path, app_dir = _detail_env
+    rom_dir = tmp_path / "roms"
+    dat_dir = tmp_path / "dats"
+    rom_dir.mkdir()
+    dat_dir.mkdir()
+
+    # ROM zip with a known CRC
+    rom_data = b"\x80\x37" + b"\xCC" * 512
+    rom_crc = f"{zlib.crc32(rom_data) & 0xFFFFFFFF:08x}"
+    with zipfile.ZipFile(rom_dir / "Game (USA).zip", "w") as zf:
+        zf.writestr("Game (USA).z64", rom_data)
+
+    # DAT file containing that CRC
+    dat_xml = (
+        '<?xml version="1.0"?>'
+        "<datafile>"
+        "<header><name>Nintendo - Nintendo 64</name></header>"
+        '<game name="Game (USA)">'
+        "<description>Game (USA)</description>"
+        f'<rom name="Game (USA).z64" size="{len(rom_data)}" crc="{rom_crc}"/>'
+        "</game>"
+        "</datafile>"
+    )
+    dat_path = dat_dir / "Nintendo - Nintendo 64.dat"
+    dat_path.write_text(dat_xml)
+
+    # Run migrations first, then seed the DB
+    from fastapi.testclient import TestClient
+    from roms4me.app import create_app
+    TestClient(create_app())
+
+    from roms4me.core.database import get_session
+    from roms4me.models.db import ScanResult, System as SystemModel
+    from sqlmodel import select
+
+    system_name = "Nintendo - Nintendo 64"
+    with get_session() as session:
+        sys_obj = SystemModel(name=system_name)
+        session.add(sys_obj)
+        session.commit()
+        session.refresh(sys_obj)
+        system_id = sys_obj.id
+
+        sr = ScanResult(
+            system_id=system_id,
+            game_name="",
+            file_name="Game (USA).zip",
+            status="unverified",
+        )
+        session.add(sr)
+        session.commit()
+
+    from roms4me.api import routes as routes_mod
+    from roms4me.api.routes import _do_analyze
+    from roms4me.core.scan_log import ScanLog
+
+    class _FakeDat:
+        def __init__(self, path, sid):
+            self.path = str(path)
+            self.system_id = sid
+
+    class _FakeRom:
+        def __init__(self, path, sid):
+            self.path = str(path)
+            self.system_id = sid
+
+    def _fake_resolve(sess):
+        return [_FakeDat(dat_path, system_id)], [_FakeRom(rom_dir, system_id)]
+
+    scan = ScanLog()
+    with patch.object(routes_mod, "_resolve_paths", _fake_resolve):
+        _do_analyze(scan, system_name, ["Game (USA).zip"])
+
+    with get_session() as session:
+        saved = session.exec(
+            select(ScanResult).where(
+                ScanResult.system_id == system_id,
+                ScanResult.file_name == "Game (USA).zip",
+            )
+        ).first()
+
+    assert saved is not None
+    assert saved.log != "", "expected non-empty log persisted to ScanResult"
+    assert "Game (USA).zip" in saved.log
