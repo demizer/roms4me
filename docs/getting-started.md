@@ -33,37 +33,49 @@ Then open [http://127.0.0.1:8000](http://127.0.0.1:8000) in your browser.
 
 ## Quick start
 
-### 1. Get a DAT file
+### 1. Add your paths
 
-DAT files describe ROM sets. You can find them from various ROM preservation communities. They are XML files with a `.dat` extension.
+Click **Settings** and configure your paths:
 
-### 2. Upload the DAT file
+- **ROMs** — Add the root directories where your ROM files are stored. Each directory should follow the `Company - System` naming convention (e.g. `Nintendo - SNES`). See [ROM Directory Format](rom-directory-format.md).
+- **DATs** — Add the directories containing your No-Intro DAT files (`.dat` XML format).
 
-Click **Upload DAT** in the toolbar and select your `.dat` file. It will be stored in the platform-appropriate data directory:
+### 2. Sync all systems
 
-| Platform | Location |
-|----------|----------|
-| Linux    | `~/.local/share/roms4me/dats/` |
-| macOS    | `~/Library/Application Support/roms4me/dats/` |
-| Windows  | `%APPDATA%/roms4me/dats/` |
+From the home view (click **roms4me** in the toolbar to return here if needed), click **Sync**. This pre-scans all configured ROM directories against your DATs and populates the sidebar with all detected systems and their compatibility ratings.
 
-### 3. Select the database
+### 3. Select a system
 
-Click on the uploaded DAT file in the left sidebar to load its game list.
+Click a system in the sidebar to view its ROM list, pre-scan rating, and matched DAT.
 
-### 4. Set your ROM path
+### 4. Analyze
 
-Click **Add ROM Path** and enter the directory where your ROM ZIPs are stored.
+Select ROMs in the list and click **Analyze** to run CRC verification against the DAT database. Matched ROMs are confirmed good dumps; unmatched ROMs may be fan translations, hacks, or bad dumps.
 
-### 5. Review results
+### 5. Export
 
-The game list shows the verification status for each game:
+Select verified ROMs and click **Add to Queue**. When ready, click the **Queue** button in the toolbar, set your export destination (e.g. an SD card path), configure region priority if needed, and click **Process Queue**.
 
-| Color  | Status |
-|--------|--------|
-| Green  | OK — all ROMs verified |
-| Red    | Missing — ROM ZIP not found |
-| Yellow | Bad dump — incomplete or corrupt |
-| Orange | Mismatch — size or checksum mismatch |
+---
 
-Click on any game to see its individual ROM files in the right panel.
+## Syncing
+
+**Sync** re-runs the pre-scan and updates the ROM list.
+
+| Scenario | How to sync |
+|----------|-------------|
+| Sync all systems | Click the **roms4me** link in the toolbar to return to the home view (no system selected), then click **Sync** |
+| Sync one system | Select the system in the sidebar, then click **Sync** — only that system's data is cleared and re-scanned |
+
+Use single-system sync when you've added or changed ROMs for one platform and don't want to wait for a full rescan.
+
+---
+
+## ROM status reference
+
+| Status | Meaning |
+|--------|---------|
+| `matched` | CRC verified against DAT — confirmed good dump |
+| `unmatched` | File analyzed but no CRC match in DAT (fan translation, hack, or bad dump) |
+| `duplicate` | Same CRC already matched by another file |
+| `unverified` | Not yet analyzed — run Analyze |
