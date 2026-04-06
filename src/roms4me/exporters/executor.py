@@ -29,11 +29,11 @@ def execute_export(rom_path: Path, plan: ExportPlan, dest_dir: Path,
         shutil.copy2(str(rom_path), str(out_path))
         return out_path
 
-    # Determine the preferred inner extension from the zip_package step so
+    # Determine the preferred inner extension from the compress_package step so
     # _read_rom_data picks the correct file (not a bundled readme or nfo).
     preferred_ext = ""
     for step in plan.steps:
-        if step.name == "zip_package":
+        if step.name == "compress_package":
             preferred_ext = Path(step.params.get("inner_name", "")).suffix.lower()
             break
 
@@ -48,7 +48,7 @@ def execute_export(rom_path: Path, plan: ExportPlan, dest_dir: Path,
         if step.name == "strip_header":
             header_size = step.params["header_size"]
             rom_data = rom_data[header_size:]
-        elif step.name == "zip_package":
+        elif step.name == "compress_package":
             zip_name = step.params["zip_name"]
             inner_name = step.params["inner_name"]
         # rename_ext handled implicitly: inner_name already carries the correct extension

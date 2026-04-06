@@ -164,7 +164,7 @@ class ZipPackageFixer:
     not being converted.
     """
 
-    name = "zip_package"
+    name = "compress_package"
 
     def suggest(self, rom_file: Path, rom_data: bytes, dat_game_name: str,
                 dat_rom_name: str, dat_rom_ext: str,
@@ -185,7 +185,7 @@ class ZipPackageFixer:
             target_inner = dat_rom_name
 
         return [ExportStep(
-            name="zip_package",
+            name="compress_package",
             description=f"Package as: {target_zip} containing {target_inner}",
             params={
                 "zip_name": target_zip,

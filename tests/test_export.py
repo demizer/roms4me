@@ -70,8 +70,8 @@ def _make_dat(name: str, rom_name: str, data: bytes) -> "DatFile":
 # ---------------------------------------------------------------------------
 
 
-def test_simple_zip_package(tmp_path):
-    """ROM already has correct extension — plan only needs zip_package."""
+def test_simple_compress_package(tmp_path):
+    """ROM already has correct extension — plan only needs compress_package."""
     rom_data = b"clean sfc rom data"
     src = _make_zip(tmp_path / "Game (USA).zip", "Game (USA).sfc", rom_data)
     dest = tmp_path / "output"
@@ -81,7 +81,7 @@ def test_simple_zip_package(tmp_path):
         target_name="Game (USA).zip",
         steps=[
             ExportStep(
-                name="zip_package",
+                name="compress_package",
                 description="Package correctly",
                 params={"zip_name": "Game (USA).zip", "inner_name": "Game (USA).sfc"},
             )
@@ -118,7 +118,7 @@ def test_strip_header_and_rename(tmp_path):
                 params={"from_ext": ".smc", "to_ext": ".sfc"},
             ),
             ExportStep(
-                name="zip_package",
+                name="compress_package",
                 description="Package as zip",
                 params={"zip_name": "Game (USA).zip", "inner_name": "Game (USA).sfc"},
             ),
@@ -149,7 +149,7 @@ def test_strip_header_from_zipped_smc(tmp_path):
                 params={"header_size": 512, "source_ext": ".smc"},
             ),
             ExportStep(
-                name="zip_package",
+                name="compress_package",
                 description="Package as zip",
                 params={"zip_name": "Game (Japan).zip", "inner_name": "Game (Japan).sfc"},
             ),
@@ -179,7 +179,7 @@ def test_overwrite_existing_file(tmp_path):
         target_name="Game (USA).zip",
         steps=[
             ExportStep(
-                name="zip_package",
+                name="compress_package",
                 description="Package",
                 params={"zip_name": "Game (USA).zip", "inner_name": "Game (USA).sfc"},
             )
@@ -203,7 +203,7 @@ def test_creates_dest_dir(tmp_path):
         target_name="Game.zip",
         steps=[
             ExportStep(
-                name="zip_package",
+                name="compress_package",
                 description="Package",
                 params={"zip_name": "Game.zip", "inner_name": "Game.sfc"},
             )
@@ -242,7 +242,7 @@ def test_no_steps_copies_file(tmp_path):
 
 
 def test_plan_and_execute_clean_sfc(tmp_path):
-    """Clean .sfc (already correct) — plan has only zip_package, output is correct."""
+    """Clean .sfc (already correct) — plan has only compress_package, output is correct."""
     from roms4me.analyzers.base import Suggestion
     from roms4me.exporters.planner import plan_export
 
@@ -289,7 +289,7 @@ def test_plan_and_execute_snes_header(tmp_path):
     plan = plan_export(src, suggestion, dat)
     step_names = [s.name for s in plan.steps]
     assert "strip_header" in step_names
-    assert "zip_package" in step_names
+    assert "compress_package" in step_names
 
     dest = tmp_path / "sdcard"
     out = execute_export(src, plan, dest)
@@ -370,8 +370,8 @@ def test_plan_removes_non_essential_embedded_files(tmp_path):
     rename_steps = [s for s in plan.steps if s.name == "rename_ext"]
     assert rename_steps == [], f"Unexpected rename_ext step(s): {[s.description for s in rename_steps]}"
 
-    # Must have zip_package as the final step
-    assert "zip_package" in step_names
+    # Must have compress_package as the final step
+    assert "compress_package" in step_names
 
 
 def test_execute_zip_with_embedded_readme_exports_rom(tmp_path):
@@ -395,7 +395,7 @@ def test_execute_zip_with_embedded_readme_exports_rom(tmp_path):
                 params={"filename": "readme.txt"},
             ),
             ExportStep(
-                name="zip_package",
+                name="compress_package",
                 description=f"Package as: WWF No Mercy (USA) (Rev 1).zip containing {rom_name}",
                 params={"zip_name": "WWF No Mercy (USA) (Rev 1).zip", "inner_name": rom_name},
             ),

@@ -11,7 +11,7 @@ plan_export(rom_path, suggestion, dat, system_name)
     │     HeaderStripFixer
     │     RenameExtFixer
     │     RemoveEmbeddedFixer
-    │     ZipPackageFixer
+    │     CompressPackageFixer
     │
     └── SYSTEM_FIXERS[system_name]   ← run only for matching systems
           (empty by default — add entries here to extend)
@@ -50,7 +50,7 @@ class ExportFixer(Protocol):
 | `HeaderStripFixer` | `strip_header` | Detects and strips copier headers (SNES .smc/.swc/.fig, NES .nes) |
 | `RenameExtFixer` | `rename_ext` | Renames the inner ROM extension to match the DAT when they differ |
 | `RemoveEmbeddedFixer` | `remove_embedded` | Flags non-ROM files inside a zip for removal |
-| `ZipPackageFixer` | `zip_package` | Repackages the ROM with the DAT-correct filename |
+| `CompressPackageFixer` | `compress_package` | Repackages the ROM with the DAT-correct filename |
 
 These run for every system. They are defined in `src/roms4me/exporters/fixers.py`.
 

@@ -1010,7 +1010,7 @@ async function showRomAnalysis(row, activeTab = "data") {
         for (const step of steps) {
             const tr = document.createElement("tr");
             let desc = step.description;
-            if (inQueue && use7z && step.name === "zip_package") {
+            if (inQueue && use7z && step.name === "compress_package") {
                 desc = desc.replace(/\.zip\b/g, ".7z");
             }
             tr.innerHTML =
