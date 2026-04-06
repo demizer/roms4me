@@ -14,6 +14,13 @@ const Resize = {
         const rightPanel = rightPanelId ? document.getElementById(rightPanelId) : null;
         if (!handle) return;
 
+        const storageKey = "resize-width-" + handleId;
+        const targetPanel = leftPanel || rightPanel;
+
+        // Restore saved width
+        const saved = localStorage.getItem(storageKey);
+        if (saved && targetPanel) targetPanel.style.width = saved + "px";
+
         let startX = 0;
         let startWidth = 0;
         let panel = null;
@@ -50,17 +57,24 @@ const Resize = {
             document.body.style.userSelect = "";
             document.removeEventListener("mousemove", onMouseMove);
             document.removeEventListener("mouseup", onMouseUp);
+            if (panel) localStorage.setItem(storageKey, panel.offsetWidth);
         }
     },
 };
 
-/** Initialize a vertical (horizontal drag) resize handle. Idempotent. */
+/** Initialize a vertical (horizontal drag) resize handle. Idempotent. Persists height to localStorage. */
 Resize.initVertical = function(handleId, panelId) {
     const handle = document.getElementById(handleId);
     const panel = document.getElementById(panelId);
     if (!handle || !panel) return;
     if (handle._resizeInit) return;
     handle._resizeInit = true;
+
+    const storageKey = "resize-height-" + panelId;
+
+    // Restore saved height
+    const saved = localStorage.getItem(storageKey);
+    if (saved) panel.style.height = saved + "px";
 
     let startY = 0;
     let startHeight = 0;
@@ -82,6 +96,7 @@ Resize.initVertical = function(handleId, panelId) {
             document.body.style.userSelect = "";
             document.removeEventListener("mousemove", onMove);
             document.removeEventListener("mouseup", onUp);
+            localStorage.setItem(storageKey, panel.offsetHeight);
         }
 
         document.addEventListener("mousemove", onMove);
