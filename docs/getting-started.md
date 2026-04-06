@@ -56,7 +56,19 @@ Right-click any row in the grid and choose **View analysis** to inspect the deta
 
 ### 5. Export
 
-Select verified ROMs and click **Add to Queue**. When ready, click the **Queue** button in the toolbar, set your export destination (e.g. an SD card path), configure region priority if needed, and click **Process Queue**.
+Select verified ROMs and click **Add to Queue**. An export settings dialog will open — configure it once per system and the settings are saved automatically:
+
+| Setting | Description |
+|---------|-------------|
+| **Export to** | Destination directory (e.g. an SD card path) |
+| **ROM only** | Strip embedded non-ROM files (readmes, etc.) from archives |
+| **One game, one ROM** | When multiple versions of the same game are queued, keep only the best region match |
+| **Region priority** | Comma-separated region preference order used by *One game, one ROM* (e.g. `USA, World, Europe, Japan`) |
+| **Compress with 7z** | Use 7z instead of zip — smaller files, same ROM data |
+
+If **One game, one ROM** causes a conflict (e.g. you selected both a USA and a Europe version), the dialog will report which version was kept and which was dropped before you close it.
+
+When ready, click the **Queue** button in the toolbar and then **Process Queue**. Each system uses its own saved settings — no need to re-enter them each time.
 
 ---
 

@@ -452,33 +452,162 @@ async function setRowPlan(rows, plan) {
 
 // --- Queue functions ---
 
+/** Pending rows waiting for export-settings confirmation. */
+let _pendingQueueRows = [];
+
 function addToQueue(rows) {
-    /** Add selected rows to the export queue. */
-    let added = 0;
-    for (const row of rows) {
-        if (!row.file_name) continue;
-        // Avoid duplicates by file_name + system
-        const exists = exportQueue.some(
-            (q) => q.file_name === row.file_name && q.system === currentSystem
-        );
-        if (!exists) {
-            exportQueue.push({
-                system: currentSystem,
-                file_name: row.file_name,
-                game_name: row.game_name || row.description || "",
-                plan: row.plan || "",
-                note: row.note || "",
-            });
-            added++;
-        }
-    }
-    updateQueueButton();
-    if (added > 0) {
-        setStatus("Added " + added + " item(s) to queue (" + exportQueue.length + " total)");
-    } else {
-        setStatus("Items already in queue");
-    }
+    /** Open export-settings modal for the given rows, then add on confirm. */
+    if (!rows.length) return;
+    _pendingQueueRows = rows;
+
+    // Load saved settings for this system from the API
+    fetchJson("/api/config/export-settings/" + encodeURIComponent(currentSystem))
+        .then((s) => _openExportSettingsModal(s, rows.length))
+        .catch(() => _openExportSettingsModal({}, rows.length));
 }
+
+function _openExportSettingsModal(settings, rowCount) {
+    /** Pre-fill the export settings modal and open it. */
+    document.getElementById("export-settings-title").textContent =
+        "Export Settings — " + (currentSystem || "");
+    document.getElementById("export-dest-input").value = settings.dest || "";
+    document.getElementById("export-rom-only").checked = settings.rom_only !== false;
+    document.getElementById("export-one-game").checked = settings.one_game_one_rom !== false;
+    document.getElementById("export-use-7z").checked = settings.archive_format === "7z";
+    document.getElementById("export-region-input").value =
+        settings.region_priority || "USA, World, Europe, Japan";
+    document.getElementById("export-conflict-notice").hidden = true;
+
+    // Region row visible only when one_game_one_rom is on
+    const oneGame = document.getElementById("export-one-game");
+    const regionRow = document.getElementById("export-region-row");
+    regionRow.hidden = !oneGame.checked;
+    oneGame.onchange = () => { regionRow.hidden = !oneGame.checked; };
+
+    const confirmBtn = document.getElementById("export-settings-confirm");
+    confirmBtn.textContent = "Add " + rowCount + " to Queue";
+
+    Modal.open("export-settings-modal");
+}
+
+document.getElementById("export-settings-cancel").addEventListener("click", () => {
+    _pendingQueueRows = [];
+    Modal.close("export-settings-modal");
+});
+
+document.getElementById("export-settings-confirm").addEventListener("click", () => {
+    const dest = document.getElementById("export-dest-input").value.trim();
+    const romOnly = document.getElementById("export-rom-only").checked;
+    const oneGame = document.getElementById("export-one-game").checked;
+    const use7z = document.getElementById("export-use-7z").checked;
+    const regionRaw = document.getElementById("export-region-input").value.trim();
+    const regionPriority = regionRaw ? regionRaw.split(",").map((s) => s.trim()).filter(Boolean) : [];
+
+    // Save settings to config
+    fetchJson("/api/config/export-settings/" + encodeURIComponent(currentSystem), {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            dest,
+            rom_only: romOnly,
+            one_game_one_rom: oneGame,
+            archive_format: use7z ? "7z" : "zip",
+            region_priority: regionRaw,
+        }),
+    }).catch(() => {});
+
+    // Build candidate items from pending rows
+    const candidates = _pendingQueueRows
+        .filter((r) => r.file_name)
+        .map((r) => ({
+            system: currentSystem,
+            file_name: r.file_name,
+            game_name: r.game_name || r.description || "",
+            plan: r.plan || "",
+            note: r.note || "",
+        }));
+
+    // Deduplicate against already-queued items (by file_name + system)
+    const newItems = candidates.filter(
+        (c) => !exportQueue.some((q) => q.file_name === c.file_name && q.system === c.system)
+    );
+
+    // One-game-one-ROM deduplication
+    const conflicts = [];
+    let finalItems = newItems;
+    if (oneGame) {
+        // Merge new items with existing same-system queue entries for conflict detection
+        const existing = exportQueue.filter((q) => q.system === currentSystem);
+        const pool = [...existing, ...newItems];
+
+        // Group pool by game_name
+        const byGame = {};
+        for (const item of pool) {
+            const key = item.game_name || item.file_name;
+            byGame[key] = byGame[key] || [];
+            byGame[key].push(item);
+        }
+
+        // Pick winner for each game group using region priority
+        const winners = new Set();
+        for (const [game, items] of Object.entries(byGame)) {
+            if (items.length <= 1) {
+                winners.add(items[0].file_name);
+                continue;
+            }
+            // Score each item by first matching region in priority list
+            const scored = items.map((item) => {
+                const name = item.game_name || item.file_name;
+                const idx = regionPriority.findIndex((r) => name.toLowerCase().includes(r.toLowerCase()));
+                return { item, score: idx === -1 ? regionPriority.length : idx };
+            });
+            scored.sort((a, b) => a.score - b.score);
+            const winner = scored[0].item;
+            winners.add(winner.file_name);
+            for (const { item } of scored.slice(1)) {
+                if (newItems.some((n) => n.file_name === item.file_name)) {
+                    conflicts.push({ kept: winner.game_name || winner.file_name, dropped: item.game_name || item.file_name });
+                }
+            }
+        }
+
+        // Remove existing queue entries that lost
+        for (let i = exportQueue.length - 1; i >= 0; i--) {
+            if (exportQueue[i].system === currentSystem && !winners.has(exportQueue[i].file_name)) {
+                exportQueue.splice(i, 1);
+            }
+        }
+        // Only add new items that won
+        finalItems = newItems.filter((item) => winners.has(item.file_name));
+    }
+
+    if (conflicts.length > 0) {
+        const notice = document.getElementById("export-conflict-notice");
+        notice.textContent = conflicts.map(
+            (c) => "Kept \"" + c.kept + "\", dropped \"" + c.dropped + "\""
+        ).join("\n");
+        notice.hidden = false;
+        // Keep modal open so user sees the conflict summary
+        exportQueue.push(...finalItems);
+        updateQueueButton();
+        document.getElementById("export-settings-confirm").textContent = "Close";
+        document.getElementById("export-settings-confirm").onclick = () => {
+            Modal.close("export-settings-modal");
+            // Reset button
+            document.getElementById("export-settings-confirm").onclick = null;
+        };
+        return;
+    }
+
+    exportQueue.push(...finalItems);
+    _pendingQueueRows = [];
+    updateQueueButton();
+    Modal.close("export-settings-modal");
+    const added = finalItems.length;
+    setStatus(added > 0
+        ? "Added " + added + " item(s) to queue (" + exportQueue.length + " total)"
+        : "Items already in queue");
+});
 
 function updateQueueButton() {
     /** Show/hide the queue toolbar button with count badge. */
@@ -522,57 +651,6 @@ function showQueue() {
         }
     }
 
-    // Region priority input
-    const regionRow = document.createElement("div");
-    regionRow.style.cssText = "display:flex;gap:0.5rem;padding:0.5rem 0.5rem 0;align-items:center;";
-    const regionLabel = document.createElement("label");
-    regionLabel.textContent = "Region priority:";
-    regionLabel.style.cssText = "font-size:0.8rem;white-space:nowrap;margin:0;";
-    const regionInput = document.createElement("input");
-    regionInput.type = "text";
-    regionInput.value = "USA, World, Europe, Japan";
-    regionInput.placeholder = "USA, World, Europe, Japan";
-    regionInput.title = "When multiple versions of the same game are queued, prefer this region order. Leave blank to export all.";
-    regionInput.style.cssText = "font-size:0.8rem;padding:0.2rem 0.4rem;margin:0;flex:1;";
-    regionRow.appendChild(regionLabel);
-    regionRow.appendChild(regionInput);
-    verifyLog.appendChild(regionRow);
-
-    // Destination path input
-    const destRow = document.createElement("div");
-    destRow.style.cssText = "display:flex;gap:0.5rem;padding:0.5rem 0.5rem 0;align-items:center;";
-    const destLabel = document.createElement("label");
-    destLabel.textContent = "Export to:";
-    destLabel.style.cssText = "font-size:0.8rem;white-space:nowrap;margin:0;";
-    const destInput = document.createElement("input");
-    destInput.type = "text";
-    destInput.placeholder = "/media/user/sdcard/Nintendo - SNES";
-    destInput.style.cssText = "font-size:0.8rem;padding:0.2rem 0.4rem;margin:0;flex:1;";
-    destRow.appendChild(destLabel);
-    destRow.appendChild(destInput);
-    verifyLog.appendChild(destRow);
-
-    // Archive format selector
-    const fmtRow = document.createElement("div");
-    fmtRow.style.cssText = "display:flex;gap:0.5rem;padding:0.5rem 0.5rem 0;align-items:center;";
-    const fmtLabel = document.createElement("label");
-    fmtLabel.textContent = "Archive format:";
-    fmtLabel.style.cssText = "font-size:0.8rem;white-space:nowrap;margin:0;";
-    const fmtSelect = document.createElement("select");
-    fmtSelect.style.cssText = "font-size:0.8rem;padding:0.2rem 0.4rem;margin:0;";
-    fmtSelect.title = "zip: widest compatibility. 7z: smaller files, slightly slower to extract.";
-    for (const [val, txt] of [["zip", "zip (default)"], ["7z", "7z (smaller)"]]) {
-        const opt = document.createElement("option");
-        opt.value = val;
-        opt.textContent = txt;
-        fmtSelect.appendChild(opt);
-    }
-    fmtSelect.value = localStorage.getItem("export-archive-format") || "zip";
-    fmtSelect.addEventListener("change", () => localStorage.setItem("export-archive-format", fmtSelect.value));
-    fmtRow.appendChild(fmtLabel);
-    fmtRow.appendChild(fmtSelect);
-    verifyLog.appendChild(fmtRow);
-
     // Process and clear buttons
     const btnRow = document.createElement("div");
     btnRow.style.cssText = "display:flex;gap:0.5rem;padding:0.5rem;";
@@ -580,12 +658,7 @@ function showQueue() {
     processBtn.className = "outline";
     processBtn.textContent = "Process Queue";
     processBtn.style.cssText = "font-size:0.8rem;padding:0.25rem 0.75rem;margin:0;";
-    processBtn.addEventListener("click", () => {
-        const regionPriority = regionInput.value.trim()
-            ? regionInput.value.split(",").map((s) => s.trim()).filter(Boolean)
-            : [];
-        processQueue(destInput.value.trim(), regionPriority, fmtSelect.value);
-    });
+    processBtn.addEventListener("click", () => processQueue());
     const clearBtn = document.createElement("button");
     clearBtn.className = "outline secondary";
     clearBtn.textContent = "Clear Queue";
@@ -633,18 +706,9 @@ async function pollUntilDone(verifyLog) {
     });
 }
 
-async function processQueue(dest, regionPriority = [], archiveFormat = "zip") {
-    /** Export queued ROMs to dest — calls /api/export per system. */
+async function processQueue() {
+    /** Export queued ROMs — loads saved settings per system from config. */
     const verifyLog = document.getElementById("verify-log");
-
-    if (!dest) {
-        verifyLog.innerHTML = "";
-        appendScanLogLine(verifyLog, "[red]Please enter a destination path");
-        return;
-    }
-
-    verifyLog.innerHTML = "";
-    appendScanLogLine(verifyLog, "[blue]Exporting " + exportQueue.length + " item(s) to " + dest + "...");
 
     // Group by system, preserving insertion order
     const bySystem = {};
@@ -653,13 +717,51 @@ async function processQueue(dest, regionPriority = [], archiveFormat = "zip") {
         bySystem[item.system].push(item);
     }
 
+    // Load settings for all systems up front
+    const settingsBySystem = {};
+    for (const system of Object.keys(bySystem)) {
+        try {
+            settingsBySystem[system] = await fetchJson(
+                "/api/config/export-settings/" + encodeURIComponent(system)
+            );
+        } catch (_) {
+            settingsBySystem[system] = {};
+        }
+    }
+
+    // Validate all systems have a destination
+    for (const [system, s] of Object.entries(settingsBySystem)) {
+        if (!s.dest || !s.dest.trim()) {
+            verifyLog.innerHTML = "";
+            appendScanLogLine(verifyLog, "[red]No export destination set for " + system + " — open Add to Queue to configure");
+            return;
+        }
+    }
+
+    verifyLog.innerHTML = "";
+    appendScanLogLine(verifyLog, "[blue]Exporting " + exportQueue.length + " item(s)...");
+
     for (const [system, items] of Object.entries(bySystem)) {
+        const s = settingsBySystem[system];
+        const dest = s.dest || "";
+        const regionPriority = s.region_priority
+            ? s.region_priority.split(",").map((r) => r.trim()).filter(Boolean)
+            : [];
+        const archiveFormat = s.archive_format || "zip";
+        const romOnly = s.rom_only !== false;
         const files = items.map((i) => i.file_name);
+
+        appendScanLogLine(verifyLog, "[blue]" + system + " → " + dest);
         try {
             const start = await fetchJson("/api/export/" + encodeURIComponent(system), {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ files, dest, region_priority: regionPriority, archive_format: archiveFormat }),
+                body: JSON.stringify({
+                    files, dest,
+                    region_priority: regionPriority,
+                    archive_format: archiveFormat,
+                    rom_only: romOnly,
+                }),
             });
             if (start.status === "already_running") {
                 appendScanLogLine(verifyLog, "[red]A task is already running — please wait and try again");
@@ -834,6 +936,14 @@ async function showRomAnalysis(row) {
     }
 
     // ── Export tab ──────────────────────────────────────────────────────────
+    // Auto-generated notice
+    const autoNote = document.createElement("p");
+    autoNote.style.cssText = "font-size:0.8rem;color:var(--pico-muted-color);margin-bottom:0.5rem;";
+    autoNote.textContent = data.export_steps && data.export_steps.length > 0
+        ? "Auto-generated plan. Use \u201cAdd to Queue\u201d to configure export settings and finalize."
+        : "";
+    if (autoNote.textContent) panes.export.appendChild(autoNote);
+
     if (data.export_steps && data.export_steps.length > 0) {
         const sec = document.createElement("div");
         sec.className = "rom-analysis-section";

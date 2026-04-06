@@ -25,6 +25,16 @@ class PathEntry(BaseModel):
     system: str
 
 
+class ExportSettings(BaseModel):
+    """Per-system export preferences."""
+
+    dest: str = ""
+    rom_only: bool = True
+    one_game_one_rom: bool = True
+    archive_format: str = "zip"  # "zip" | "7z"
+    region_priority: str = "USA, World, Europe, Japan"
+
+
 class AppConfig(BaseModel):
     """Application configuration stored in config.toml."""
 
@@ -32,6 +42,7 @@ class AppConfig(BaseModel):
     saves_path: str = ""
     rom_paths: list[PathEntry] = []
     dat_paths: list[PathEntry] = []
+    export_settings: dict[str, ExportSettings] = {}
 
 
 def load_config() -> AppConfig:
@@ -107,4 +118,16 @@ def set_saves_path(path: str) -> None:
     """Set the saves directory path."""
     config = load_config()
     config.saves_path = path
+    save_config(config)
+
+
+def get_export_settings(system: str) -> ExportSettings:
+    """Return export settings for a system, falling back to defaults."""
+    return load_config().export_settings.get(system, ExportSettings())
+
+
+def set_export_settings(system: str, settings: ExportSettings) -> None:
+    """Persist export settings for a system."""
+    config = load_config()
+    config.export_settings[system] = settings
     save_config(config)

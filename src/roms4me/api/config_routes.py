@@ -2,7 +2,14 @@
 
 from fastapi import APIRouter
 
-from roms4me.core.config import load_config, set_saves_path, set_theme
+from roms4me.core.config import (
+    ExportSettings,
+    get_export_settings,
+    load_config,
+    set_export_settings,
+    set_saves_path,
+    set_theme,
+)
 from roms4me.core.paths import get_config_path
 
 router = APIRouter(prefix="/api/config", tags=["config"])
@@ -42,3 +49,27 @@ async def put_saves_path(req: dict) -> dict:
     path = req.get("path", "")
     set_saves_path(path)
     return {"path": path}
+
+
+@router.get("/export-settings/{system_name}")
+async def get_export_settings_route(system_name: str) -> dict:
+    """Get export settings for a system."""
+    s = get_export_settings(system_name)
+    return s.model_dump()
+
+
+@router.put("/export-settings/{system_name}")
+async def put_export_settings_route(system_name: str, req: dict) -> dict:
+    """Save export settings for a system."""
+    archive_format = req.get("archive_format", "zip")
+    if archive_format not in ("zip", "7z"):
+        archive_format = "zip"
+    s = ExportSettings(
+        dest=req.get("dest", ""),
+        rom_only=bool(req.get("rom_only", True)),
+        one_game_one_rom=bool(req.get("one_game_one_rom", True)),
+        archive_format=archive_format,
+        region_priority=req.get("region_priority", "USA, World, Europe, Japan"),
+    )
+    set_export_settings(system_name, s)
+    return s.model_dump()
