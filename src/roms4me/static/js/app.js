@@ -799,12 +799,12 @@ async function showRomAnalysis(row) {
 
     // ── Logs tab ────────────────────────────────────────────────────────────
     if (data.log && data.log.trim()) {
-        const pre = document.createElement("pre");
-        pre.style.fontSize = "0.78rem";
-        pre.style.whiteSpace = "pre-wrap";
-        pre.style.wordBreak = "break-word";
-        pre.textContent = data.log.replace(/^\[[\w]+\]/gm, "");  // strip color tags
-        panes.logs.appendChild(pre);
+        const logContainer = document.createElement("div");
+        logContainer.style.fontSize = "0.78rem";
+        for (const line of data.log.split("\n")) {
+            appendScanLogLine(logContainer, line);
+        }
+        panes.logs.appendChild(logContainer);
     } else {
         const p = document.createElement("p");
         p.style.color = "var(--pico-muted-color)";
