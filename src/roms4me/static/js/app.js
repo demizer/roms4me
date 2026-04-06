@@ -610,7 +610,7 @@ document.getElementById("export-settings-confirm").addEventListener("click", () 
 
     // Refresh the analysis panel if it's showing one of the just-queued files
     if (_currentAnalysisRow && finalItems.some((i) => i.file_name === _currentAnalysisRow.file_name)) {
-        showRomAnalysis(_currentAnalysisRow);
+        showRomAnalysis(_currentAnalysisRow, "export");
     }
 
     const added = finalItems.length;
@@ -800,7 +800,7 @@ function _fmtSize(bytes) {
     return (i === 0 ? n : n.toFixed(1)) + " " + units[i];
 }
 
-async function showRomAnalysis(row) {
+async function showRomAnalysis(row, activeTab = "data") {
     /** Show ROM analysis Data/Logs/Export tabs in the verify panel. */
     _currentAnalysisRow = row;
     const verifyPanel = document.getElementById("verify-panel");
@@ -833,7 +833,7 @@ async function showRomAnalysis(row) {
 
     for (const [id, label] of [["data", "Data"], ["logs", "Logs"], ["export", "Export plan"]]) {
         const btn = document.createElement("button");
-        btn.className = "ra-tab" + (id === "data" ? " active" : "");
+        btn.className = "ra-tab" + (id === activeTab ? " active" : "");
         btn.textContent = label;
         btn.addEventListener("click", () => {
             tabBar.querySelectorAll(".ra-tab").forEach(b => b.classList.toggle("active", b === btn));
@@ -842,7 +842,7 @@ async function showRomAnalysis(row) {
         tabBar.appendChild(btn);
         const pane = document.createElement("div");
         pane.className = "ra-tab-pane";
-        pane.hidden = id !== "data";
+        pane.hidden = id !== activeTab;
         panes[id] = pane;
     }
     frag.appendChild(tabBar);
