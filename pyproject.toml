@@ -29,6 +29,7 @@ packages = ["src/roms4me"]
 
 [dependency-groups]
 dev = [
+    "httpx>=0.27",
     "mkdocs-material>=9.7.6",
     "playwright>=1.58.0",
     "pytest>=9.0.2",

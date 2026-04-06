@@ -7,6 +7,8 @@ Tests cover:
 - Overwriting an existing file at the destination
 - Destination directory creation
 - plan_export() + execute_export() end-to-end
+- Zip with embedded readme: plan removes non-essential file, no bogus rename_ext
+- Executor: zip with embedded non-ROM picks correct ROM file to export
 - Region priority helpers: base name extraction, region extraction, filtering logic
 """
 
@@ -324,6 +326,87 @@ def test_plan_and_execute_overwrites_old_collection(tmp_path):
 
     _, inner_data = _zip_inner(out)
     assert inner_data == rom_data  # fresh copy, not the old one
+
+
+def test_plan_removes_non_essential_embedded_files(tmp_path):
+    """Zip with ROM (.z64) + readme (.txt): plan has remove_embedded for txt, no rename_ext."""
+    from roms4me.analyzers.base import Suggestion
+    from roms4me.exporters.planner import plan_export
+    from roms4me.models.dat import DatFile, GameEntry, RomEntry
+
+    z64_data = b"\x80\x37" + b"\xAB" * 4096  # N64 BigEndian magic + body
+    crc = f"{zlib.crc32(z64_data) & 0xFFFFFFFF:08x}"
+    rom_name = "WWF No Mercy (USA) (Rev 1).z64"
+
+    zip_path = tmp_path / "WWF No Mercy (USA) (Rev 1).zip"
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        zf.writestr("readme.txt", b"This ROM was downloaded from the internet.\n")
+        zf.writestr(rom_name, z64_data)
+
+    game = GameEntry(
+        name="WWF No Mercy (USA) (Rev 1)",
+        description="WWF No Mercy (USA) (Rev 1)",
+        roms=[RomEntry(name=rom_name, size=len(z64_data), crc=crc)],
+    )
+    # DAT name must match a known system pattern so get_rom_extensions returns N64 extensions
+    dat = DatFile(name="Nintendo - Nintendo 64", file_path="", games=[game])
+
+    suggestion = Suggestion(
+        dat_game_name="WWF No Mercy (USA) (Rev 1)",
+        confidence=1.0,
+        reason="",
+        crc_match=True,
+    )
+
+    plan = plan_export(zip_path, suggestion, dat)
+    step_names = [s.name for s in plan.steps]
+
+    # Must have remove_embedded for the txt readme
+    remove_steps = [s for s in plan.steps if s.name == "remove_embedded"]
+    assert len(remove_steps) == 1, f"Expected 1 remove_embedded step, got: {step_names}"
+    assert "readme.txt" in remove_steps[0].params["filename"]
+
+    # Must NOT suggest renaming .txt → .z64 (the .z64 is already there)
+    rename_steps = [s for s in plan.steps if s.name == "rename_ext"]
+    assert rename_steps == [], f"Unexpected rename_ext step(s): {[s.description for s in rename_steps]}"
+
+    # Must have zip_package as the final step
+    assert "zip_package" in step_names
+
+
+def test_execute_zip_with_embedded_readme_exports_rom(tmp_path):
+    """Executor reads the .z64 ROM from a zip that also contains a readme."""
+    z64_data = b"\x80\x37" + b"\xCC" * 2048
+    rom_name = "WWF No Mercy (USA) (Rev 1).z64"
+
+    zip_path = tmp_path / "WWF No Mercy (USA) (Rev 1).zip"
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        zf.writestr("readme.txt", b"This ROM was downloaded from the internet.\n")
+        zf.writestr(rom_name, z64_data)
+
+    dest = tmp_path / "output"
+    plan = ExportPlan(
+        rom_file="WWF No Mercy (USA) (Rev 1).zip",
+        target_name="WWF No Mercy (USA) (Rev 1).zip",
+        steps=[
+            ExportStep(
+                name="remove_embedded",
+                description="Remove non-essential embedded file: readme.txt",
+                params={"filename": "readme.txt"},
+            ),
+            ExportStep(
+                name="zip_package",
+                description=f"Package as: WWF No Mercy (USA) (Rev 1).zip containing {rom_name}",
+                params={"zip_name": "WWF No Mercy (USA) (Rev 1).zip", "inner_name": rom_name},
+            ),
+        ],
+    )
+
+    out = execute_export(zip_path, plan, dest)
+
+    inner_name, inner_data = _zip_inner(out)
+    assert inner_name == rom_name
+    assert inner_data == z64_data  # the ROM, not the readme
 
 
 # ---------------------------------------------------------------------------
