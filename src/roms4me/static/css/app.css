@@ -865,6 +865,34 @@ tr.dg-row.dg-selected td {
     font-weight: 600;
 }
 
+/* Info callout card — used for auto-generated plan notice */
+.ra-callout {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.6rem;
+    padding: 0.65rem 0.9rem;
+    margin-bottom: 1rem;
+    border-radius: var(--pico-border-radius, 4px);
+    border-left: 3px solid var(--pico-primary);
+    background: color-mix(in srgb, var(--pico-primary) 10%, var(--pico-card-background-color, transparent));
+    font-size: 0.82rem;
+    line-height: 1.4;
+    color: var(--pico-color);
+}
+
+.ra-callout-icon {
+    flex-shrink: 0;
+    font-size: 1rem;
+    line-height: 1.4;
+    color: var(--pico-primary);
+}
+
+.ra-callout-body strong {
+    display: block;
+    margin-bottom: 0.15rem;
+    color: var(--pico-primary);
+}
+
 /* ---- Settings layout ---- */
 .settings-layout {
     display: flex !important;

@@ -936,13 +936,17 @@ async function showRomAnalysis(row) {
     }
 
     // ── Export tab ──────────────────────────────────────────────────────────
-    // Auto-generated notice
-    const autoNote = document.createElement("p");
-    autoNote.style.cssText = "font-size:0.8rem;color:var(--pico-muted-color);margin-bottom:0.5rem;";
-    autoNote.textContent = data.export_steps && data.export_steps.length > 0
-        ? "Auto-generated plan. Use \u201cAdd to Queue\u201d to configure export settings and finalize."
-        : "";
-    if (autoNote.textContent) panes.export.appendChild(autoNote);
+    if (data.export_steps && data.export_steps.length > 0) {
+        const callout = document.createElement("div");
+        callout.className = "ra-callout";
+        callout.innerHTML =
+            '<span class="ra-callout-icon">&#9432;</span>' +
+            '<div class="ra-callout-body">' +
+            '<strong>Auto-generated plan</strong>' +
+            'Steps shown are based on analysis only. Click \u201cAdd to Queue\u201d to configure destination, format, and region settings before exporting.' +
+            '</div>';
+        panes.export.appendChild(callout);
+    }
 
     if (data.export_steps && data.export_steps.length > 0) {
         const sec = document.createElement("div");
