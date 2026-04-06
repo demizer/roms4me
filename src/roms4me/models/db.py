@@ -36,6 +36,7 @@ class ScanResult(SQLModel, table=True):
     game_name: str = Field(index=True)
     description: str = ""
     file_name: str = ""
+    rom_type: str = ""
     expected_file_name: str = ""
     status: str = ""  # ok, missing, bad_dump, checksum_mismatch, size_mismatch, unmatched, matched
     note: str = ""  # explanation for unmatched items
