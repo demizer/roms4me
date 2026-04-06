@@ -125,7 +125,7 @@ def test_analyzer_matches_byteswapped_loose(tmp_path):
     s = suggestions[0]
     assert s.dat_game_name == "WWF No Mercy (USA) (Rev 1)"
     assert s.crc_match is True
-    assert "ByteSwapped" in s.reason
+    assert "Byte Swapped" in s.reason
 
 
 def test_analyzer_matches_littleendian_loose(tmp_path):
@@ -139,7 +139,7 @@ def test_analyzer_matches_littleendian_loose(tmp_path):
 
     assert len(suggestions) == 1
     assert suggestions[0].crc_match is True
-    assert "LittleEndian" in suggestions[0].reason
+    assert "Little Endian" in suggestions[0].reason
 
 
 def test_analyzer_skips_bigendian(tmp_path):

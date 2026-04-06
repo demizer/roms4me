@@ -1,5 +1,6 @@
 """Export executor — applies an ExportPlan to produce a destination ROM file."""
 
+import io
 import shutil
 import zipfile
 from pathlib import Path
@@ -7,13 +8,14 @@ from pathlib import Path
 from roms4me.exporters.base import ExportPlan
 
 
-def execute_export(rom_path: Path, plan: ExportPlan, dest_dir: Path) -> Path:
+def execute_export(rom_path: Path, plan: ExportPlan, dest_dir: Path,
+                   archive_format: str = "zip") -> Path:
     """Apply an ExportPlan and write the result to dest_dir.
+
+    archive_format: "zip" (default) or "7z".
 
     Returns the path to the exported file. Overwrites any existing file.
     Creates dest_dir (and any parents) if it does not exist.
-
-    Works on Linux, macOS, and Windows via pathlib.
     """
     dest_dir.mkdir(parents=True, exist_ok=True)
 
@@ -42,16 +44,26 @@ def execute_export(rom_path: Path, plan: ExportPlan, dest_dir: Path) -> Path:
         if step.name == "strip_header":
             header_size = step.params["header_size"]
             rom_data = rom_data[header_size:]
+        elif step.name == "convert_byteorder":
+            from roms4me.analyzers.n64_byteorder import to_bigendian
+            rom_data = to_bigendian(rom_data, step.params.get("from_fmt", "byteswapped"))
         elif step.name == "zip_package":
             zip_name = step.params["zip_name"]
             inner_name = step.params["inner_name"]
-        # rename_ext is handled implicitly: inner_name already has the correct extension
-        # remove_embedded is handled implicitly: executor builds a clean zip from scratch
+        # rename_ext handled implicitly: inner_name already carries the correct extension
+        # remove_embedded handled implicitly: executor builds a clean archive from scratch
 
     if zip_name:
-        out_path = dest_dir / zip_name
-        with zipfile.ZipFile(out_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-            zf.writestr(inner_name or plan.target_name, rom_data)
+        final_inner = inner_name or plan.target_name
+        if archive_format == "7z":
+            import py7zr
+            out_path = dest_dir / Path(zip_name).with_suffix(".7z").name
+            with py7zr.SevenZipFile(out_path, "w") as szf:
+                szf.write({final_inner: io.BytesIO(rom_data)})
+        else:
+            out_path = dest_dir / zip_name
+            with zipfile.ZipFile(out_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+                zf.writestr(final_inner, rom_data)
     else:
         out_path = dest_dir / plan.target_name
         out_path.write_bytes(rom_data)

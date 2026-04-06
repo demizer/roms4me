@@ -552,6 +552,27 @@ function showQueue() {
     destRow.appendChild(destInput);
     verifyLog.appendChild(destRow);
 
+    // Archive format selector
+    const fmtRow = document.createElement("div");
+    fmtRow.style.cssText = "display:flex;gap:0.5rem;padding:0.5rem 0.5rem 0;align-items:center;";
+    const fmtLabel = document.createElement("label");
+    fmtLabel.textContent = "Archive format:";
+    fmtLabel.style.cssText = "font-size:0.8rem;white-space:nowrap;margin:0;";
+    const fmtSelect = document.createElement("select");
+    fmtSelect.style.cssText = "font-size:0.8rem;padding:0.2rem 0.4rem;margin:0;";
+    fmtSelect.title = "zip: widest compatibility. 7z: smaller files, slightly slower to extract.";
+    for (const [val, txt] of [["zip", "zip (default)"], ["7z", "7z (smaller)"]]) {
+        const opt = document.createElement("option");
+        opt.value = val;
+        opt.textContent = txt;
+        fmtSelect.appendChild(opt);
+    }
+    fmtSelect.value = localStorage.getItem("export-archive-format") || "zip";
+    fmtSelect.addEventListener("change", () => localStorage.setItem("export-archive-format", fmtSelect.value));
+    fmtRow.appendChild(fmtLabel);
+    fmtRow.appendChild(fmtSelect);
+    verifyLog.appendChild(fmtRow);
+
     // Process and clear buttons
     const btnRow = document.createElement("div");
     btnRow.style.cssText = "display:flex;gap:0.5rem;padding:0.5rem;";
@@ -563,7 +584,7 @@ function showQueue() {
         const regionPriority = regionInput.value.trim()
             ? regionInput.value.split(",").map((s) => s.trim()).filter(Boolean)
             : [];
-        processQueue(destInput.value.trim(), regionPriority);
+        processQueue(destInput.value.trim(), regionPriority, fmtSelect.value);
     });
     const clearBtn = document.createElement("button");
     clearBtn.className = "outline secondary";
@@ -612,7 +633,7 @@ async function pollUntilDone(verifyLog) {
     });
 }
 
-async function processQueue(dest, regionPriority = []) {
+async function processQueue(dest, regionPriority = [], archiveFormat = "zip") {
     /** Export queued ROMs to dest — calls /api/export per system. */
     const verifyLog = document.getElementById("verify-log");
 
@@ -638,7 +659,7 @@ async function processQueue(dest, regionPriority = []) {
             const start = await fetchJson("/api/export/" + encodeURIComponent(system), {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ files, dest, region_priority: regionPriority }),
+                body: JSON.stringify({ files, dest, region_priority: regionPriority, archive_format: archiveFormat }),
             });
             if (start.status === "already_running") {
                 appendScanLogLine(verifyLog, "[red]A task is already running — please wait and try again");

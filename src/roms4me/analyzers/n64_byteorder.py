@@ -32,8 +32,9 @@ _MAGIC: dict[bytes, str] = {
 }
 
 _FORMAT_LABEL: dict[str, str] = {
-    "byteswapped": "ByteSwapped (.v64)",
-    "littleendian": "LittleEndian (.n64)",
+    "bigendian":    "Big Endian (.z64)",
+    "byteswapped":  "Byte Swapped (.v64) — every byte pair swapped",
+    "littleendian": "Little Endian (.n64) — every 4-byte group reversed",
 }
 
 
@@ -131,8 +132,10 @@ class N64ByteOrderAnalyzer:
                 dat_game_name=game.name,
                 confidence=1.0,
                 reason=(
-                    f"ROM is {label}; BigEndian CRC after conversion matches DAT. "
-                    f"Convert to .z64 format for a clean export."
+                    f"ROM detected as {label}. "
+                    f"All three N64 formats (.z64/.v64/.n64) contain identical data in different byte orders; "
+                    f"Big Endian (.z64) is the No-Intro standard and compresses best. "
+                    f"CRC verified after normalizing to Big Endian: {normalized_crc} (raw: {original_crc})."
                 ),
                 expected_crc=normalized_crc,
                 actual_crc=original_crc,

@@ -110,6 +110,42 @@ class RenameExtFixer:
         )]
 
 
+class N64ByteOrderFixer:
+    """Detects non-BigEndian N64 ROMs and suggests byte-order conversion to BigEndian (.z64)."""
+
+    name = "convert_byteorder"
+    _N64_EXTS: frozenset[str] = frozenset({".z64", ".v64", ".n64"})
+
+    def suggest(self, rom_file: Path, rom_data: bytes, dat_game_name: str,
+                dat_rom_name: str, dat_rom_ext: str,
+                accepted_exts: set[str] | None = None) -> list[ExportStep]:
+        """Suggest byte-order conversion when ROM is not BigEndian."""
+        from roms4me.analyzers.n64_byteorder import detect_n64_format
+
+        if rom_file.suffix.lower() == ".zip":
+            inner_ext = _inner_ext_from_zip(rom_file, accepted_exts)
+        else:
+            inner_ext = rom_file.suffix.lower()
+
+        if inner_ext not in self._N64_EXTS:
+            return []
+
+        fmt = detect_n64_format(rom_data)
+        if fmt is None or fmt == "bigendian":
+            return []
+
+        _labels = {
+            "byteswapped":  "Byte Swapped (.v64)",
+            "littleendian": "Little Endian (.n64)",
+        }
+        label = _labels.get(fmt, fmt)
+        return [ExportStep(
+            name="convert_byteorder",
+            description=f"Convert {label} → Big Endian (.z64) (same data, corrected byte order)",
+            params={"from_fmt": fmt},
+        )]
+
+
 class RemoveEmbeddedFixer:
     """Suggests removing non-ROM files from a zip archive."""
 
@@ -167,6 +203,7 @@ class ZipPackageFixer:
 # All fixers in pipeline order
 ALL_FIXERS = [
     HeaderStripFixer(),
+    N64ByteOrderFixer(),
     RenameExtFixer(),
     RemoveEmbeddedFixer(),
     ZipPackageFixer(),
