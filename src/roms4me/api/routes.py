@@ -926,7 +926,7 @@ def _do_analyze(scan, system_name: str, files: list[str]):
             if best.crc_match is True:
                 new_status = "matched"
                 for dat in dats:
-                    ep = plan_export(rom_file, best, dat)
+                    ep = plan_export(rom_file, best, dat, system_name=system_name)
                     if ep.steps:
                         export_plan = ep
                         break
@@ -1349,7 +1349,7 @@ def _do_export(scan, system_name: str, files: list[str], dest_dir: Path,
             # Build export plan (fast — reads ROM and runs fixers)
             export_plan = None
             for dat in dats:
-                ep = plan_export(rom_file, suggestion, dat)
+                ep = plan_export(rom_file, suggestion, dat, system_name=system_name)
                 if ep:
                     export_plan = ep
                     break
@@ -1522,6 +1522,7 @@ async def rom_details(system_name: str, file: str) -> dict:
                                 crc_match=True,
                             ),
                             dat,
+                            system_name=system_name,
                         )
                         if ep.steps:
                             export_steps = [

@@ -194,10 +194,35 @@ class ZipPackageFixer:
         )]
 
 
-# All fixers in pipeline order
+# All fixers in pipeline order — run for every system
 ALL_FIXERS = [
     HeaderStripFixer(),
     RenameExtFixer(),
     RemoveEmbeddedFixer(),
     ZipPackageFixer(),
 ]
+
+# System-specific fixers — keyed by a substring that must appear in the DAT
+# system name (case-insensitive), same matching convention as ROM_EXTENSIONS in
+# handlers/registry.py.  Add new entries here to extend the export pipeline for
+# a system without touching the base fixers.
+#
+# Example:
+#   "PlayStation": [ChdPackageFixer()],
+#   "Dreamcast":   [ChdPackageFixer()],
+SYSTEM_FIXERS: dict[str, list] = {}
+
+
+def get_system_fixers(dat_name: str) -> list:
+    """Return extra fixers for a system, or [] if none are registered.
+
+    Performs substring matching on *dat_name* (case-insensitive), identical to
+    how :func:`roms4me.handlers.registry.get_rom_extensions` resolves systems.
+    All matching entries are merged in the order they appear in the registry.
+    """
+    result = []
+    lower = dat_name.lower()
+    for key, fixers in SYSTEM_FIXERS.items():
+        if key.lower() in lower:
+            result.extend(fixers)
+    return result

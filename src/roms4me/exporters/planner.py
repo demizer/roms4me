@@ -6,7 +6,7 @@ from pathlib import Path
 
 from roms4me.analyzers.base import Suggestion
 from roms4me.exporters.base import ExportPlan
-from roms4me.exporters.fixers import ALL_FIXERS
+from roms4me.exporters.fixers import ALL_FIXERS, get_system_fixers
 from roms4me.handlers.registry import get_rom_extensions
 from roms4me.models.dat import DatFile
 
@@ -17,11 +17,14 @@ def plan_export(
     rom_path: Path,
     suggestion: Suggestion,
     dat: DatFile,
+    system_name: str = "",
 ) -> ExportPlan:
     """Generate an export plan for a ROM given an analysis suggestion.
 
-    Runs all fixers to determine what transformations are needed
-    to produce a DAT-correct ROM.
+    Runs the base fixers (ALL_FIXERS) followed by any system-specific fixers
+    registered in SYSTEM_FIXERS for *system_name* (or *dat.name* when
+    *system_name* is omitted).  New system-specific fixers can be added to
+    ``exporters/fixers.SYSTEM_FIXERS`` without touching this function.
     """
     plan = ExportPlan(
         rom_file=rom_path.name,
@@ -46,8 +49,10 @@ def plan_export(
     if not rom_data:
         return plan
 
-    # Run all fixers
-    for fixer in ALL_FIXERS:
+    # Run base fixers + any system-specific fixers
+    resolve_name = system_name or dat.name
+    fixers = ALL_FIXERS + get_system_fixers(resolve_name)
+    for fixer in fixers:
         try:
             steps = fixer.suggest(
                 rom_path, rom_data,
