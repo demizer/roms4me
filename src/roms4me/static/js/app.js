@@ -11,6 +11,12 @@ const statusText = document.getElementById("status-text");
 /** @type {Array<{system: string, file_name: string, game_name: string, plan: string, note: string}>} */
 const exportQueue = [];
 
+/**
+ * Settings snapshot captured at queue-add time, keyed by system name.
+ * @type {Record<string, {dest: string, rom_only: boolean, archive_format: string, region_priority: string}>}
+ */
+const exportSystemSettings = {};
+
 // --- API helpers ---
 
 async function fetchJson(url, opts = {}) {
@@ -603,6 +609,14 @@ document.getElementById("export-settings-confirm").addEventListener("click", () 
         return;
     }
 
+    // Snapshot the settings for this system at queue-add time
+    exportSystemSettings[currentSystem] = {
+        dest,
+        rom_only: romOnly,
+        archive_format: use7z ? "7z" : "zip",
+        region_priority: regionRaw,
+    };
+
     exportQueue.push(...finalItems);
     _pendingQueueRows = [];
     updateQueueButton();
@@ -654,7 +668,10 @@ function showQueue() {
     }
 
     for (const [system, items] of Object.entries(bySystem)) {
-        appendScanLogLine(verifyLog, "[blue]" + system + " (" + items.length + " items)");
+        const s = exportSystemSettings[system] || {};
+        const fmt = s.archive_format === "7z" ? "7z" : "zip";
+        const flags = [s.dest || "(no destination)", fmt, s.rom_only !== false ? "ROM only" : null].filter(Boolean);
+        appendScanLogLine(verifyLog, "[blue]" + system + " — " + flags.join(" · ") + " (" + items.length + " item" + (items.length !== 1 ? "s" : "") + ")");
         for (const item of items) {
             const plan = item.plan ? " [" + item.plan + "]" : "";
             appendScanLogLine(verifyLog, "  " + item.game_name + plan);
@@ -675,6 +692,7 @@ function showQueue() {
     clearBtn.style.cssText = "font-size:0.8rem;padding:0.25rem 0.75rem;margin:0;";
     clearBtn.addEventListener("click", () => {
         exportQueue.length = 0;
+        for (const k of Object.keys(exportSystemSettings)) delete exportSystemSettings[k];
         updateQueueButton();
         showQueue();
     });
@@ -717,7 +735,7 @@ async function pollUntilDone(verifyLog) {
 }
 
 async function processQueue() {
-    /** Export queued ROMs — loads saved settings per system from config. */
+    /** Export queued ROMs using the settings snapshot captured at queue-add time. */
     const verifyLog = document.getElementById("verify-log");
 
     // Group by system, preserving insertion order
@@ -727,23 +745,12 @@ async function processQueue() {
         bySystem[item.system].push(item);
     }
 
-    // Load settings for all systems up front
-    const settingsBySystem = {};
+    // Validate all systems have a destination in the snapshot
     for (const system of Object.keys(bySystem)) {
-        try {
-            settingsBySystem[system] = await fetchJson(
-                "/api/config/export-settings/" + encodeURIComponent(system)
-            );
-        } catch (_) {
-            settingsBySystem[system] = {};
-        }
-    }
-
-    // Validate all systems have a destination
-    for (const [system, s] of Object.entries(settingsBySystem)) {
+        const s = exportSystemSettings[system] || {};
         if (!s.dest || !s.dest.trim()) {
             verifyLog.innerHTML = "";
-            appendScanLogLine(verifyLog, "[red]No export destination set for " + system + " — open Add to Queue to configure");
+            appendScanLogLine(verifyLog, "[red]No export destination set for " + system + " — use Add to Queue to configure");
             return;
         }
     }
@@ -752,7 +759,7 @@ async function processQueue() {
     appendScanLogLine(verifyLog, "[blue]Exporting " + exportQueue.length + " item(s)...");
 
     for (const [system, items] of Object.entries(bySystem)) {
-        const s = settingsBySystem[system];
+        const s = exportSystemSettings[system] || {};
         const dest = s.dest || "";
         const regionPriority = s.region_priority
             ? s.region_priority.split(",").map((r) => r.trim()).filter(Boolean)
@@ -785,6 +792,7 @@ async function processQueue() {
     }
 
     exportQueue.length = 0;
+    for (const k of Object.keys(exportSystemSettings)) delete exportSystemSettings[k];
     updateQueueButton();
 }
 
@@ -951,15 +959,8 @@ async function showRomAnalysis(row, activeTab = "data") {
         (q) => q.file_name === row.file_name && q.system === currentSystem
     );
 
-    // Load saved export settings for this system (needed to adjust plan display)
-    let exportSettings = {};
-    if (inQueue) {
-        try {
-            exportSettings = await fetchJson(
-                "/api/config/export-settings/" + encodeURIComponent(currentSystem)
-            );
-        } catch (_) {}
-    }
+    // Use the settings snapshot captured at queue-add time
+    const exportSettings = inQueue ? (exportSystemSettings[currentSystem] || {}) : {};
 
     if (data.export_steps && data.export_steps.length > 0) {
         const callout = document.createElement("div");
