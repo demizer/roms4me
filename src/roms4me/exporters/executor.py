@@ -23,7 +23,15 @@ def execute_export(rom_path: Path, plan: ExportPlan, dest_dir: Path) -> Path:
         shutil.copy2(str(rom_path), str(out_path))
         return out_path
 
-    rom_data = _read_rom_data(rom_path)
+    # Determine the preferred inner extension from the zip_package step so
+    # _read_rom_data picks the correct file (not a bundled readme or nfo).
+    preferred_ext = ""
+    for step in plan.steps:
+        if step.name == "zip_package":
+            preferred_ext = Path(step.params.get("inner_name", "")).suffix.lower()
+            break
+
+    rom_data = _read_rom_data(rom_path, preferred_ext)
     if rom_data is None:
         raise OSError(f"Could not read ROM data from {rom_path}")
 
@@ -38,6 +46,7 @@ def execute_export(rom_path: Path, plan: ExportPlan, dest_dir: Path) -> Path:
             zip_name = step.params["zip_name"]
             inner_name = step.params["inner_name"]
         # rename_ext is handled implicitly: inner_name already has the correct extension
+        # remove_embedded is handled implicitly: executor builds a clean zip from scratch
 
     if zip_name:
         out_path = dest_dir / zip_name
@@ -50,14 +59,25 @@ def execute_export(rom_path: Path, plan: ExportPlan, dest_dir: Path) -> Path:
     return out_path
 
 
-def _read_rom_data(rom_path: Path) -> bytes | None:
-    """Read ROM data from a loose file or the first entry in a zip."""
+def _read_rom_data(rom_path: Path, preferred_ext: str = "") -> bytes | None:
+    """Read ROM data from a loose file or the best-matching entry in a zip.
+
+    preferred_ext: if set (e.g. '.z64'), prefer entries with that extension.
+    Falls back to the largest file when nothing matches.
+    """
     try:
         if rom_path.suffix.lower() == ".zip":
             with zipfile.ZipFile(rom_path, "r") as zf:
-                for info in zf.infolist():
-                    if not info.is_dir():
-                        return zf.read(info.filename)
+                entries = [e for e in zf.infolist() if not e.is_dir()]
+                if preferred_ext:
+                    candidates = [e for e in entries if Path(e.filename).suffix.lower() == preferred_ext]
+                    if not candidates:
+                        candidates = entries
+                else:
+                    candidates = entries
+                if candidates:
+                    best = max(candidates, key=lambda e: e.file_size)
+                    return zf.read(best.filename)
         else:
             return rom_path.read_bytes()
     except (zipfile.BadZipFile, OSError):

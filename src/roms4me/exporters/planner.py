@@ -7,6 +7,7 @@ from pathlib import Path
 from roms4me.analyzers.base import Suggestion
 from roms4me.exporters.base import ExportPlan
 from roms4me.exporters.fixers import ALL_FIXERS
+from roms4me.handlers.registry import get_rom_extensions
 from roms4me.models.dat import DatFile
 
 log = logging.getLogger(__name__)
@@ -37,8 +38,11 @@ def plan_export(
                 dat_rom_ext = Path(dat_rom_name).suffix.lower()
             break
 
-    # Read ROM data
-    rom_data = _read_rom_data(rom_path)
+    # Accepted ROM extensions for this system (used to select primary file from archives)
+    accepted_exts: set[str] | None = set(get_rom_extensions(dat.name)) or None
+
+    # Read ROM data (picks primary ROM file from zip using whitelist)
+    rom_data = _read_rom_data(rom_path, accepted_exts)
     if not rom_data:
         return plan
 
@@ -49,6 +53,7 @@ def plan_export(
                 rom_path, rom_data,
                 suggestion.dat_game_name,
                 dat_rom_name, dat_rom_ext,
+                accepted_exts,
             )
             plan.steps.extend(steps)
         except Exception as e:
@@ -57,14 +62,25 @@ def plan_export(
     return plan
 
 
-def _read_rom_data(rom_path: Path) -> bytes | None:
-    """Read raw ROM data from a file or the first entry in a zip."""
+def _read_rom_data(rom_path: Path, accepted_exts: set[str] | None = None) -> bytes | None:
+    """Read raw ROM data from a file or the best-matching entry in a zip.
+
+    accepted_exts: whitelist of lowercase extensions (e.g. {'.z64', '.v64'}).
+    Falls back to the largest file when no entry matches.
+    """
     try:
         if rom_path.suffix.lower() == ".zip":
             with zipfile.ZipFile(rom_path, "r") as zf:
-                for info in zf.infolist():
-                    if not info.is_dir():
-                        return zf.read(info.filename)
+                entries = [e for e in zf.infolist() if not e.is_dir()]
+                if accepted_exts:
+                    candidates = [e for e in entries if Path(e.filename).suffix.lower() in accepted_exts]
+                    if not candidates:
+                        candidates = entries
+                else:
+                    candidates = entries
+                if candidates:
+                    best = max(candidates, key=lambda e: e.file_size)
+                    return zf.read(best.filename)
         else:
             return rom_path.read_bytes()
     except (zipfile.BadZipFile, OSError) as e:

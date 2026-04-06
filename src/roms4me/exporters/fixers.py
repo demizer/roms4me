@@ -1,6 +1,7 @@
 """Built-in export fixers — detect and suggest ROM transformations."""
 
 import logging
+import zipfile
 from pathlib import Path
 
 from roms4me.exporters.base import ExportStep
@@ -16,27 +17,45 @@ HEADER_EXTENSIONS = {
 }
 
 
+def _inner_ext_from_zip(
+    rom_file: Path,
+    accepted_exts: set[str] | None = None,
+) -> str:
+    """Return the extension of the primary ROM entry inside a zip.
+
+    Uses accepted_exts whitelist to prefer ROM files; falls back to the
+    largest file when nothing matches.  Returns empty string on failure.
+    """
+    try:
+        with zipfile.ZipFile(rom_file) as zf:
+            entries = [e for e in zf.infolist() if not e.is_dir()]
+            if accepted_exts:
+                candidates = [e for e in entries if Path(e.filename).suffix.lower() in accepted_exts]
+                if not candidates:
+                    candidates = entries
+            else:
+                candidates = entries
+            if candidates:
+                best = max(candidates, key=lambda e: e.file_size)
+                return Path(best.filename).suffix.lower()
+    except Exception:
+        pass
+    return ""
+
+
 class HeaderStripFixer:
     """Suggests stripping copier headers when detected."""
 
     name = "strip_header"
 
     def suggest(self, rom_file: Path, rom_data: bytes, dat_game_name: str,
-                dat_rom_name: str, dat_rom_ext: str) -> list[ExportStep]:
+                dat_rom_name: str, dat_rom_ext: str,
+                accepted_exts: set[str] | None = None) -> list[ExportStep]:
         """Detect copier headers and suggest stripping."""
-        # Get the inner filename extension (from zip or loose)
-        inner_ext = Path(rom_file.stem).suffix.lower() if rom_file.suffix.lower() == ".zip" else rom_file.suffix.lower()
-        # For zips, we need to check the inner file extension
         if rom_file.suffix.lower() == ".zip":
-            import zipfile
-            try:
-                with zipfile.ZipFile(rom_file) as zf:
-                    for info in zf.infolist():
-                        if not info.is_dir():
-                            inner_ext = Path(info.filename).suffix.lower()
-                            break
-            except Exception:
-                pass
+            inner_ext = _inner_ext_from_zip(rom_file, accepted_exts)
+        else:
+            inner_ext = rom_file.suffix.lower()
 
         header_size = HEADER_EXTENSIONS.get(inner_ext)
         if not header_size:
@@ -70,25 +89,18 @@ class RenameExtFixer:
     name = "rename_ext"
 
     def suggest(self, rom_file: Path, rom_data: bytes, dat_game_name: str,
-                dat_rom_name: str, dat_rom_ext: str) -> list[ExportStep]:
+                dat_rom_name: str, dat_rom_ext: str,
+                accepted_exts: set[str] | None = None) -> list[ExportStep]:
         """Suggest extension rename if current doesn't match DAT."""
         if not dat_rom_ext:
             return []
 
-        # Get actual inner extension
-        inner_ext = rom_file.suffix.lower()
         if rom_file.suffix.lower() == ".zip":
-            import zipfile
-            try:
-                with zipfile.ZipFile(rom_file) as zf:
-                    for info in zf.infolist():
-                        if not info.is_dir():
-                            inner_ext = Path(info.filename).suffix.lower()
-                            break
-            except Exception:
-                pass
+            inner_ext = _inner_ext_from_zip(rom_file, accepted_exts)
+        else:
+            inner_ext = rom_file.suffix.lower()
 
-        if inner_ext == dat_rom_ext.lower():
+        if not inner_ext or inner_ext == dat_rom_ext.lower():
             return []
 
         return [ExportStep(
@@ -98,13 +110,46 @@ class RenameExtFixer:
         )]
 
 
+class RemoveEmbeddedFixer:
+    """Suggests removing non-ROM files from a zip archive."""
+
+    name = "remove_embedded"
+
+    def suggest(self, rom_file: Path, rom_data: bytes, dat_game_name: str,
+                dat_rom_name: str, dat_rom_ext: str,
+                accepted_exts: set[str] | None = None) -> list[ExportStep]:
+        """Suggest removing files whose extension is not in accepted_exts."""
+        if rom_file.suffix.lower() != ".zip":
+            return []
+        if not accepted_exts:
+            return []
+
+        steps = []
+        try:
+            with zipfile.ZipFile(rom_file) as zf:
+                for entry in zf.infolist():
+                    if entry.is_dir():
+                        continue
+                    ext = Path(entry.filename).suffix.lower()
+                    if ext not in accepted_exts:
+                        steps.append(ExportStep(
+                            name="remove_embedded",
+                            description=f"Remove non-essential embedded file: {entry.filename}",
+                            params={"filename": entry.filename},
+                        ))
+        except Exception:
+            pass
+        return steps
+
+
 class ZipPackageFixer:
     """Suggests zipping the ROM with the DAT-correct filename."""
 
     name = "zip_package"
 
     def suggest(self, rom_file: Path, rom_data: bytes, dat_game_name: str,
-                dat_rom_name: str, dat_rom_ext: str) -> list[ExportStep]:
+                dat_rom_name: str, dat_rom_ext: str,
+                accepted_exts: set[str] | None = None) -> list[ExportStep]:
         """Suggest packaging as a zip with the correct DAT name."""
         target_zip = f"{dat_game_name}.zip"
         target_inner = dat_rom_name
@@ -123,5 +168,6 @@ class ZipPackageFixer:
 ALL_FIXERS = [
     HeaderStripFixer(),
     RenameExtFixer(),
+    RemoveEmbeddedFixer(),
     ZipPackageFixer(),
 ]
