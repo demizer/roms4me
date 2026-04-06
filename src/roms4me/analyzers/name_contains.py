@@ -30,8 +30,17 @@ class NameContainsAnalyzer:
             if not game_base:
                 continue
 
+            if base_lower == game_base:
+                # Exact base name match — high confidence, will be CRC-verified
+                suggestions.append(Suggestion(
+                    dat_game_name=game.name,
+                    confidence=0.9,
+                    reason=f'Exact base name match: "{base}"',
+                    expected_crc=game.roms[0].crc if game.roms else "",
+                ))
+
             # ROM base contained in DAT name (word boundary match)
-            if _word_match(base_lower, game_base) and base_lower != game_base:
+            elif _word_match(base_lower, game_base):
                 coverage = len(base_lower) / len(game_base)
                 suggestions.append(Suggestion(
                     dat_game_name=game.name,
@@ -41,7 +50,7 @@ class NameContainsAnalyzer:
                 ))
 
             # DAT base contained in ROM name (word boundary match)
-            elif _word_match(game_base, base_lower) and game_base != base_lower:
+            elif _word_match(game_base, base_lower):
                 coverage = len(game_base) / len(base_lower)
                 suggestions.append(Suggestion(
                     dat_game_name=game.name,
