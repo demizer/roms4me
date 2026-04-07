@@ -1,16 +1,16 @@
-"""Tests for NameContainsAnalyzer and pipeline error surfacing.
+"""Tests for NameMatchAnalyzer and pipeline error surfacing.
 
 Covers:
-- NameContainsAnalyzer: exact base name match returns suggestion with confidence=0.9
-- NameContainsAnalyzer: partial match (ROM base inside DAT name)
-- NameContainsAnalyzer: reverse partial match (DAT base inside ROM name)
-- NameContainsAnalyzer: short base names are ignored
+- NameMatchAnalyzer: exact base name match
+- NameMatchAnalyzer: partial match (ROM base inside DAT name)
+- NameMatchAnalyzer: reverse partial match (DAT base inside ROM name)
+- NameMatchAnalyzer: short base names are ignored
 - Pipeline error surfacing: analyzer exceptions appear in result.errors
 - Pipeline error surfacing: errors don't crash the pipeline
 """
 
 from roms4me.analyzers import pipeline as pl
-from roms4me.analyzers.name_contains import NameContainsAnalyzer
+from roms4me.analyzers.name_match import NameMatchAnalyzer
 from roms4me.analyzers.pipeline import analyze_rom
 from roms4me.models.dat import DatFile, GameEntry, RomEntry
 
@@ -34,54 +34,53 @@ def _make_dat(*game_names: str, crc: str = "aabbccdd") -> DatFile:
 
 
 # ---------------------------------------------------------------------------
-# NameContainsAnalyzer — exact base name match
+# NameMatchAnalyzer — name matching
 # ---------------------------------------------------------------------------
 
 
-def test_exact_base_name_match_returns_high_confidence():
-    """ROM base name exactly matches DAT entry base name → confidence=0.9, exact match reason."""
+def test_exact_full_name_match():
+    """ROM name exactly matches DAT entry → highest confidence."""
     dat = _make_dat("WWF No Mercy (USA) (Rev 1)")
-    analyzer = NameContainsAnalyzer()
+    analyzer = NameMatchAnalyzer()
 
     suggestions = analyzer.analyze("WWF No Mercy (USA) (Rev 1)", dat)
 
     assert len(suggestions) >= 1
     best = suggestions[0]
     assert best.dat_game_name == "WWF No Mercy (USA) (Rev 1)"
-    assert best.confidence == 0.9
-    assert "Exact base name match" in best.reason
+    assert best.confidence == 0.95
+    assert "Exact name match" in best.reason
 
 
-def test_exact_base_name_match_no_tags():
-    """ROM filename without tags still matches DAT entry with tags."""
+def test_base_name_match_no_tags():
+    """ROM filename without tags matches DAT entry via base name."""
     dat = _make_dat("Tetris (USA)")
-    analyzer = NameContainsAnalyzer()
+    analyzer = NameMatchAnalyzer()
 
     suggestions = analyzer.analyze("Tetris", dat)
 
-    # "Tetris" base == "Tetris" base from "Tetris (USA)" → exact match
     assert any(s.dat_game_name == "Tetris (USA)" for s in suggestions)
     exact = next(s for s in suggestions if s.dat_game_name == "Tetris (USA)")
-    assert exact.confidence == 0.9
-    assert "Exact base name match" in exact.reason
+    assert exact.confidence >= 0.85
+    assert "base name" in exact.reason.lower() or "name match" in exact.reason.lower()
 
 
 def test_exact_match_is_ranked_above_partial():
     """When DAT has both an exact match and a partial match, exact is ranked first."""
     dat = _make_dat("Spawn (USA)", "Todd McFarlane's Spawn - The Video Game (USA)")
-    analyzer = NameContainsAnalyzer()
+    analyzer = NameMatchAnalyzer()
 
     suggestions = analyzer.analyze("Spawn (U)", dat)
 
-    # Exact match for "Spawn (USA)" should come first
+    # Region-expanded "Spawn (USA)" should match first
     assert suggestions[0].dat_game_name == "Spawn (USA)"
-    assert suggestions[0].confidence == 0.9
+    assert suggestions[0].confidence >= 0.85
 
 
 def test_partial_match_rom_base_in_dat_name():
     """ROM base name found inside a longer DAT entry name."""
     dat = _make_dat("Todd McFarlane's Spawn - The Video Game (USA)")
-    analyzer = NameContainsAnalyzer()
+    analyzer = NameMatchAnalyzer()
 
     suggestions = analyzer.analyze("Spawn (U)", dat)
 
@@ -94,7 +93,7 @@ def test_partial_match_rom_base_in_dat_name():
 def test_partial_match_dat_base_in_rom_name():
     """DAT base name found inside a longer ROM name."""
     dat = _make_dat("Tetris (USA)")
-    analyzer = NameContainsAnalyzer()
+    analyzer = NameMatchAnalyzer()
 
     # ROM name contains the full DAT base
     suggestions = analyzer.analyze("Super Tetris Challenge (USA)", dat)
@@ -105,7 +104,7 @@ def test_partial_match_dat_base_in_rom_name():
 def test_short_base_name_returns_empty():
     """Base names under 3 characters produce no suggestions (too ambiguous)."""
     dat = _make_dat("EA Sports (USA)")
-    analyzer = NameContainsAnalyzer()
+    analyzer = NameMatchAnalyzer()
 
     suggestions = analyzer.analyze("EA (U)", dat)
 
@@ -115,7 +114,7 @@ def test_short_base_name_returns_empty():
 def test_no_match_returns_empty():
     """Completely unrelated ROM and DAT produce no suggestions."""
     dat = _make_dat("Super Mario Bros (USA)")
-    analyzer = NameContainsAnalyzer()
+    analyzer = NameMatchAnalyzer()
 
     assert analyzer.analyze("Zelda (U)", dat) == []
 

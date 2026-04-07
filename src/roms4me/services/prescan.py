@@ -5,9 +5,14 @@ to give a quick traffic-light rating per system.
 """
 
 import logging
-import re
 from pathlib import Path
 
+from roms4me.analyzers.name_match import (
+    extract_base,
+    extract_tags,
+    find_closest_match,
+    normalize_name,
+)
 from roms4me.models.dat import DatFile
 
 log = logging.getLogger(__name__)
@@ -75,7 +80,7 @@ def prescan_system(dat: DatFile, rom_dir: Path) -> PrescanResult:
         ext = f.suffix.lower()
         if ext:
             result.rom_extensions.add(ext)
-        rom_names[_normalize_name(f.stem)] = f
+        rom_names[normalize_name(f.stem)] = f
 
     # Check extension compatibility
     ext_overlap = result.dat_extensions & result.rom_extensions
@@ -87,14 +92,14 @@ def prescan_system(dat: DatFile, rom_dir: Path) -> PrescanResult:
     # Multiple ROMs can normalize to the same key (e.g., (U) and (USA))
     rom_lookup: dict[str, list[str]] = {}
     for f in rom_files:
-        norm = _normalize_name(f.stem)
+        norm = normalize_name(f.stem)
         rom_lookup.setdefault(norm, []).append(f.name)
 
     # Try filename matching per game (cheap, no hashing)
     match_count = 0
     matched_rom_files: set[str] = set()
     for game in dat.games:
-        norm_game = _normalize_name(game.name)
+        norm_game = normalize_name(game.name)
         candidates = rom_lookup.get(norm_game, [])
         # Pick the best candidate — prefer one not already matched
         matched_file = ""
@@ -118,7 +123,7 @@ def prescan_system(dat: DatFile, rom_dir: Path) -> PrescanResult:
     dat_game_names = [game.name for game in dat.games]
     for f in rom_files:
         if f.name not in matched_rom_files:
-            closest, reason = find_closest_dat_match(f.stem, dat_game_names)
+            closest, reason = find_closest_match(f.stem, dat_game_names)
             gm = GameMatch(
                 game_name=f.stem,
                 description=f.stem,
@@ -187,78 +192,6 @@ def _rate_match(
             f"ROMs have {_fmt_exts(result.rom_extensions)}"
         )
 
-
-def find_closest_dat_match(rom_stem: str, dat_names: list[str]) -> tuple[str, str]:
-    """Find the closest DAT game name to a ROM filename and explain the mismatch.
-
-    Returns (closest_dat_name, reason) or ("", "No similar DAT entry found").
-    """
-    rom_norm = _normalize_name(rom_stem)
-    rom_base = _extract_base_name(rom_stem)
-
-    best_name = ""
-    best_score = 0.0
-    best_reason = ""
-
-    for dat_name in dat_names:
-        dat_base = _extract_base_name(dat_name)
-
-        # Exact base name match — differs only in tags
-        if rom_base and dat_base and rom_base == dat_base:
-            rom_tags = _extract_tags(rom_stem)
-            dat_tags = _extract_tags(dat_name)
-            diffs = []
-            if rom_tags != dat_tags:
-                only_rom = rom_tags - dat_tags
-                only_dat = dat_tags - rom_tags
-                if only_rom:
-                    diffs.append(f"ROM has: {', '.join(sorted(only_rom))}")
-                if only_dat:
-                    diffs.append(f"DAT has: {', '.join(sorted(only_dat))}")
-            reason = "; ".join(diffs) if diffs else "Different naming convention"
-            return dat_name, f"Similar: {dat_name} — {reason}"
-
-        # Fuzzy: check token overlap
-        dat_norm = _normalize_name(dat_name)
-        if not rom_norm or not dat_norm:
-            continue
-        rom_tokens = set(rom_norm.split())
-        dat_tokens = set(dat_norm.split())
-        if not rom_tokens or not dat_tokens:
-            continue
-        common = rom_tokens & dat_tokens
-        score = len(common) / max(len(rom_tokens), len(dat_tokens))
-        if score > best_score:
-            best_score = score
-            best_name = dat_name
-            if score > 0.5:
-                best_reason = f"Similar: {dat_name}"
-
-    if best_reason:
-        return best_name, best_reason
-    return "", "No similar DAT entry found"
-
-
-def _extract_base_name(name: str) -> str:
-    """Extract the base game name before any parenthesized/bracketed tags."""
-    # "Mega Man X (USA) [!]" -> "mega man x"
-    base = re.sub(r"\s*[\[\(].*", "", name).strip().lower()
-    return re.sub(r"[^a-z0-9 ]", "", base).strip()
-
-
-def _extract_tags(name: str) -> set[str]:
-    """Extract all parenthesized and bracketed tags from a name."""
-    return set(re.findall(r"[\[\(]([^\]\)]+)[\]\)]", name))
-
-
-def _normalize_name(name: str) -> str:
-    """Normalize a game name for fuzzy comparison."""
-    name = name.lower()
-    # Remove common tags: (USA), [!], (Rev 1), etc.
-    name = re.sub(r"\s*[\[\(][^\]\)]*[\]\)]", "", name)
-    # Remove non-alphanumeric
-    name = re.sub(r"[^a-z0-9]", "", name)
-    return name
 
 
 def _fmt_exts(exts: set[str]) -> str:

@@ -712,7 +712,7 @@ def _do_system_scan(scan, system_name: str):
                 scan.info(f"  ✓ {ok} ok, ✗ {missing} missing, ? {other} other")
 
                 # Find ROM files not matched by CRC and add as "unmatched"
-                from roms4me.services.prescan import find_closest_dat_match
+                from roms4me.analyzers.name_match import find_closest_match as find_closest_dat_match
 
                 matched_files = {gr.file_name for gr in results if gr.file_name}
                 dat_game_names = [g.name for g in dat.games]

@@ -20,16 +20,14 @@ from roms4me.handlers.registry import get_rom_extensions
 from roms4me.analyzers.crc_lookup import CrcLookupAnalyzer
 from roms4me.analyzers.header_strip import HeaderStripAnalyzer
 from roms4me.analyzers.n64_byteorder import N64ByteOrderAnalyzer
-from roms4me.analyzers.name_contains import NameContainsAnalyzer
-from roms4me.analyzers.region_map import RegionMapAnalyzer
+from roms4me.analyzers.name_match import NameMatchAnalyzer
 from roms4me.models.dat import DatFile
 
 log = logging.getLogger(__name__)
 
 # Name-based analyzers — run for every system, filename only
 NAME_ANALYZERS = [
-    RegionMapAnalyzer(),
-    NameContainsAnalyzer(),
+    NameMatchAnalyzer(),
 ]
 
 # File-based analyzers that run for every system

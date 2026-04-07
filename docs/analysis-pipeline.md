@@ -5,23 +5,27 @@ The analysis pipeline identifies and verifies ROM files against DAT databases. I
 ## Overview
 
 ```
-analyze_rom(rom_path, dat)
+analyze_rom(rom_path, dat, precomputed_crc="")
     │
-    ├── _get_file_analyzers(dat.name)
+    ├── CRC computed once (precomputed or _compute_crc)
+    │     zip:  stored CRC from central directory
+    │     7z:   FileInfo.crc32 from archive header
+    │     chd:  crc32_of_chd() — streams all hunks
+    │     other: streamed in 8 MB chunks
+    │
+    ├── _get_file_analyzers(dat.name)         crc= passed to all
     │     BASE_FILE_ANALYZERS        ← run for every system
-    │       CrcLookupAnalyzer
-    │       HeaderStripAnalyzer
+    │       CrcLookupAnalyzer          uses crc — pure DAT lookup
+    │       HeaderStripAnalyzer        ignores crc — reads file bytes
     │
     │     SYSTEM_FILE_ANALYZERS      ← run only for matching systems
     │       "Nintendo 64": [N64ByteOrderAnalyzer]
     │       (add entries here to extend)
     │
     ├── NAME_ANALYZERS               ← run for every system, filename only
-    │     RegionMapAnalyzer
-    │     NameContainsAnalyzer
+    │     NameMatchAnalyzer            unified: region expansion + base name
     │
-    └── CRC verify name-based candidates
-          _compute_crc()
+    └── CRC verify name-based candidates (reuses same crc)
           _compute_stripped_crcs()   ← N64 normalization only for Nintendo 64
 ```
 
@@ -29,10 +33,12 @@ analyze_rom(rom_path, dat)
 
 | Type | Interface method | Input | When it runs |
 |------|-----------------|-------|--------------|
-| File-based | `analyze_file(rom_path, dat)` | ROM bytes | Before name-based; can confirm a match directly |
+| File-based | `analyze_file(rom_path, dat, crc="")` | ROM path + precomputed CRC | Before name-based; can confirm a match directly |
 | Name-based | `analyze(rom_stem, dat)` | Filename stem | After file-based; produces candidates that are CRC-verified |
 
 Both types return `list[Suggestion]`. A `Suggestion` with `crc_match=True` is a confirmed match and short-circuits the pipeline (no further analyzers run).
+
+File-based analyzers receive `crc=` from the pipeline. Analyzers that need it (like `CrcLookupAnalyzer`) use it directly; others ignore it. CRC is computed once per ROM — never per-analyzer or per-DAT.
 
 ## Base analyzers (`BASE_FILE_ANALYZERS`)
 
@@ -40,8 +46,22 @@ Run for every system regardless of DAT name.
 
 | Analyzer | What it does |
 |----------|-------------|
-| `CrcLookupAnalyzer` | Computes CRC32 of the ROM and looks it up directly in the DAT |
+| `CrcLookupAnalyzer` | Looks up the precomputed CRC directly in the DAT (no I/O) |
 | `HeaderStripAnalyzer` | Tries stripping known copier headers (SNES, NES, Lynx, Atari 7800) and re-checking the CRC |
+
+## Name matching (`NAME_ANALYZERS`)
+
+`NameMatchAnalyzer` in `src/roms4me/analyzers/name_match.py` is the unified name matcher. It runs for every system and combines all name-matching strategies in one pass:
+
+| Step | Confidence | What it does |
+|------|-----------|-------------|
+| Exact full-name match | 0.95 | Case-insensitive full name comparison |
+| Region expansion | 0.85–0.90 | Expand `(U)` → `(USA)` etc., then match |
+| Exact base-name match | 0.85 | Strip tags, compare base names |
+| Word boundary (ROM in DAT) | ≤ 0.70 | ROM base found inside DAT name |
+| Word boundary (DAT in ROM) | ≤ 0.50 | DAT base found inside ROM name |
+
+The same module provides `find_closest_match()` used by the prescan service for unmatched ROM diagnostics, and shared utilities (`expand_regions`, `extract_base`, `normalize_name`, `extract_tags`) used across the codebase.
 
 ## System-specific analyzers (`SYSTEM_FILE_ANALYZERS`)
 
