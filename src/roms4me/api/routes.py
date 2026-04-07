@@ -834,9 +834,8 @@ def _do_analyze(scan, system_name: str, files: list[str]):
 
         dats = [parse_dat_file(Path(dp.path)) for dp in dat_path_entries if Path(dp.path).exists()]
 
-        total_dat_games = sum(len(d.games) for d in dats)
-        dat_labels = ", ".join(sorted({all_systems.get(dp.system_id, "") for dp in dat_path_entries}))
-        scan.info(f"DAT: {dat_labels} ({total_dat_games} games loaded)", color="blue")
+        for dat in dats:
+            scan.info(f"DAT: {dat.name} ({len(dat.games)} games)", color="blue")
         if not dats:
             scan.info("  No DAT files could be loaded — check DAT paths in Settings", color="red")
             scan.finish("")
@@ -866,6 +865,7 @@ def _do_analyze(scan, system_name: str, files: list[str]):
             all_diagnostics: list[str] = []
             rom_inner_type = ""  # populated from first analysis result
             for dat in dats:
+                scan.info(f"  Checking: {dat.name} ({len(dat.games)} games)", color="blue")
                 analysis = analyze_rom(rom_file, dat, verify_crc=True)
                 all_suggestions.extend(analysis.suggestions)
                 all_diagnostics.extend(analysis.diagnostics)
