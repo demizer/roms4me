@@ -46,6 +46,10 @@ class AnalysisResult:
     errors: list[str] = field(default_factory=list)
     """Analyzer errors or warnings to surface to the user."""
 
+    diagnostics: list[str] = field(default_factory=list)
+    """Diagnostic messages from analyzers (e.g. byte-order conversion attempts).
+    Surfaced to the user when no confirmed match was found."""
+
     rom_inner_type: str = ""
     """Extension of the primary ROM file inside an archive (e.g. 'v64', 'sfc').
     Empty for loose ROM files (use the file's own extension instead).

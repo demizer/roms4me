@@ -160,3 +160,40 @@ class N64ByteOrderAnalyzer:
                 ))
 
         return suggestions
+
+    def diagnose(self, rom_path: Path, dat: DatFile) -> list[str]:
+        """Return diagnostic strings about N64 format detection and CRC conversion attempts.
+
+        Called by the pipeline when no confirmed match was found. Re-runs format
+        detection and all byte-order conversions, reporting each CRC and whether
+        it appears in the DAT.
+        """
+        from roms4me.handlers.registry import get_rom_extensions
+        accepted = set(get_rom_extensions(dat.name)) or None
+        rom_data = _read_rom_data(rom_path, accepted)
+        if not rom_data:
+            return []
+
+        fmt = detect_n64_format(rom_data)
+        if fmt is None:
+            return []
+
+        label = _FORMAT_LABEL.get(fmt, fmt)
+        dat_crcs: set[str] = {r.crc.lower() for g in dat.games for r in g.roms if r.crc}
+        raw_crc = f"{zlib.crc32(rom_data) & 0xFFFFFFFF:08x}"
+
+        msgs = [
+            f"N64 format detected: {label}",
+            f"Raw CRC: {raw_crc} ({'in DAT' if raw_crc in dat_crcs else 'not in DAT'})",
+        ]
+        for try_fmt in ("byteswapped", "littleendian"):
+            norm = to_bigendian(rom_data, try_fmt)
+            norm_crc = f"{zlib.crc32(norm) & 0xFFFFFFFF:08x}"
+            if norm_crc == raw_crc:
+                continue
+            in_dat = norm_crc in dat_crcs
+            msgs.append(
+                f"Tried as {_FORMAT_LABEL.get(try_fmt, try_fmt)}: "
+                f"{norm_crc} → {'MATCH' if in_dat else 'no match'}"
+            )
+        return msgs

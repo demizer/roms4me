@@ -163,6 +163,16 @@ def analyze_rom(
 
     # Sort: confirmed CRC matches first, then by confidence
     result.suggestions.sort(key=lambda s: (s.crc_match is True, s.confidence), reverse=True)
+
+    # Collect diagnostics from analyzers (only when no confirmed match)
+    if not any(s.crc_match is True for s in result.suggestions):
+        for analyzer in _get_file_analyzers(dat.name):
+            if hasattr(analyzer, "diagnose"):
+                try:
+                    result.diagnostics.extend(analyzer.diagnose(rom_path, dat))
+                except Exception as e:
+                    log.warning("Analyzer '%s' diagnose() failed: %s", analyzer.name, e)
+
     return result
 
 
