@@ -106,7 +106,8 @@ def execute_export(rom_path: Path, plan: ExportPlan, dest_dir: Path,
             for name, data in extras:
                 payload[name] = io.BytesIO(data)
             with py7zr.SevenZipFile(out_path, "w") as szf:
-                szf.write(payload)
+                for name, data in payload.items():
+                    szf.writef(data, name)
         else:
             out_path = dest_dir / zip_name
             with zipfile.ZipFile(out_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:

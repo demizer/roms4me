@@ -496,6 +496,11 @@ function _openExportSettingsModal(settings, rowCount) {
     document.getElementById("export-region-input").value =
         settings.region_priority || "USA, World, Europe, Japan";
     document.getElementById("export-conflict-notice").hidden = true;
+    document.getElementById("export-settings-cancel").hidden = false;
+    for (const id of ["export-dest-input", "export-rom-only", "export-one-game",
+                       "export-use-7z", "export-convert-byteorder", "export-region-input"]) {
+        document.getElementById(id).disabled = false;
+    }
 
     // Region row visible only when one_game_one_rom is on
     const oneGame = document.getElementById("export-one-game");
@@ -505,6 +510,7 @@ function _openExportSettingsModal(settings, rowCount) {
 
     const confirmBtn = document.getElementById("export-settings-confirm");
     confirmBtn.textContent = "Add " + rowCount + " to Queue";
+    confirmBtn.onclick = null;
 
     Modal.open("export-settings-modal");
 }
@@ -604,19 +610,22 @@ document.getElementById("export-settings-confirm").addEventListener("click", () 
 
     if (conflicts.length > 0) {
         const notice = document.getElementById("export-conflict-notice");
-        notice.textContent = conflicts.map(
-            (c) => "Kept \"" + c.kept + "\", dropped \"" + c.dropped + "\""
-        ).join("\n");
+        notice.innerHTML = "<strong>One game, one ROM — conflicts resolved:</strong>" +
+            conflicts.map((c) =>
+                "<div>Kept \u201c" + c.kept + "\u201d \u2014 dropped \u201c" + c.dropped + "\u201d</div>"
+            ).join("");
         notice.hidden = false;
-        // Keep modal open so user sees the conflict summary
+        // Gray out settings — items are already queued
+        document.getElementById("export-settings-cancel").hidden = true;
+        for (const id of ["export-dest-input", "export-rom-only", "export-one-game",
+                           "export-use-7z", "export-convert-byteorder", "export-region-input"]) {
+            document.getElementById(id).disabled = true;
+        }
         exportQueue.push(...finalItems);
         updateQueueButton();
-        document.getElementById("export-settings-confirm").textContent = "Close";
-        document.getElementById("export-settings-confirm").onclick = () => {
-            Modal.close("export-settings-modal");
-            // Reset button
-            document.getElementById("export-settings-confirm").onclick = null;
-        };
+        const confirmBtn = document.getElementById("export-settings-confirm");
+        confirmBtn.textContent = "Okay";
+        confirmBtn.onclick = () => Modal.close("export-settings-modal");
         return;
     }
 

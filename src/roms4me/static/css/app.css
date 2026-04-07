@@ -865,6 +865,24 @@ tr.dg-row.dg-selected td {
     font-weight: 600;
 }
 
+/* Export conflict notice — shown when one-game-one-ROM drops entries */
+.export-conflict-notice {
+    margin-top: 0.75rem;
+    padding: 0.6rem 0.85rem;
+    border-radius: var(--pico-border-radius, 4px);
+    border-left: 3px solid #d97706;
+    background: color-mix(in srgb, #d97706 12%, var(--pico-card-background-color, transparent));
+    color: var(--pico-color);
+    font-size: 0.85rem;
+    line-height: 1.7;
+}
+
+.export-conflict-notice strong {
+    display: block;
+    margin-bottom: 0.25rem;
+    color: #d97706;
+}
+
 /* Info callout card — used for auto-generated plan notice */
 .ra-callout {
     display: flex;

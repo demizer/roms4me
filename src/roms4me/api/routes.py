@@ -1380,7 +1380,7 @@ def _do_export(scan, system_name: str, files: list[str], dest_dir: Path,
                                           convert_byteorder=convert_byteorder)
                 scan.info(f"  → {out_path.name}", color="green")
                 exported += 1
-            except OSError as e:
+            except Exception as e:
                 scan.info(f"  Export failed: {e}", color="red")
                 failed += 1
 
