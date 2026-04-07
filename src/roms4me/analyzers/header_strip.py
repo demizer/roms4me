@@ -28,6 +28,10 @@ HEADER_SIZES = [
 ]
 
 
+# Formats that never have copier headers — skip reading multi-GB disc images
+_NO_HEADER_EXTS = {".7z", ".iso", ".chd", ".cso", ".zso", ".gz", ".cue"}
+
+
 class HeaderStripAnalyzer:
     """Analyzer that strips known copier headers and retries CRC matching."""
 
@@ -133,9 +137,7 @@ def _read_rom_data(rom_path: Path, accepted_exts: set[str] | None = None) -> byt
                 if candidates:
                     best = max(candidates, key=lambda e: e.file_size)
                     return zf.read(best.filename)
-        elif rom_path.suffix.lower() == ".7z":
-            # Decompressing a 7z to strip a few header bytes is not worth it;
-            # disc images inside 7z archives never have copier headers.
+        elif rom_path.suffix.lower() in _NO_HEADER_EXTS:
             return None
         else:
             return rom_path.read_bytes()
