@@ -860,165 +860,179 @@ def _do_analyze(scan, system_name: str, files: list[str]):
                 scan.info(f"  File not found", color="red")
                 continue
 
-            # List archive contents so it's clear which file produces the CRC
-            suffix = rom_file.suffix.lower()
-            if suffix == ".zip":
-                try:
-                    with zipfile.ZipFile(rom_file) as _zf:
-                        _entries = sorted(_zf.infolist(), key=lambda e: e.file_size, reverse=True)
-                        scan.info(f"  Archive ({len(_entries)} file(s)):")
-                        for _e in _entries:
-                            scan.info(f"    {_e.filename}  {_e.file_size:,} bytes  CRC: {_e.CRC & 0xFFFFFFFF:08x}")
-                except Exception:
-                    pass
-            elif suffix == ".7z":
-                try:
-                    import py7zr as _py7zr
-                    with _py7zr.SevenZipFile(rom_file, mode="r") as _szf:
-                        _entries_7z = sorted(_szf.list(), key=lambda e: e.uncompressed, reverse=True)
-                        scan.info(f"  Archive ({len(_entries_7z)} file(s)):")
-                        for _e in _entries_7z:
-                            _crc_str = f"{_e.crc32 & 0xFFFFFFFF:08x}" if _e.crc32 is not None else "no CRC stored"
-                            scan.info(f"    {_e.filename}  {_e.uncompressed:,} bytes  CRC: {_crc_str}")
-                except Exception:
-                    pass
+            try:  # ---- per-ROM analysis (exceptions must not stop the scan) ----
+                suffix = rom_file.suffix.lower()
+                if suffix == ".zip":
+                    try:
+                        with zipfile.ZipFile(rom_file) as _zf:
+                            _entries = sorted(_zf.infolist(), key=lambda e: e.file_size, reverse=True)
+                            scan.info(f"  Archive ({len(_entries)} file(s)):")
+                            for _e in _entries:
+                                scan.info(f"    {_e.filename}  {_e.file_size:,} bytes  CRC: {_e.CRC & 0xFFFFFFFF:08x}")
+                    except Exception:
+                        pass
+                elif suffix == ".7z":
+                    try:
+                        import py7zr as _py7zr
+                        with _py7zr.SevenZipFile(rom_file, mode="r") as _szf:
+                            _entries_7z = sorted(_szf.list(), key=lambda e: e.uncompressed, reverse=True)
+                            scan.info(f"  Archive ({len(_entries_7z)} file(s)):")
+                            for _e in _entries_7z:
+                                _crc_str = f"{_e.crc32 & 0xFFFFFFFF:08x}" if _e.crc32 is not None else "no CRC stored"
+                                scan.info(f"    {_e.filename}  {_e.uncompressed:,} bytes  CRC: {_crc_str}")
+                    except Exception:
+                        pass
 
-            # Compute CRC once for this ROM
-            from roms4me.analyzers.pipeline import _compute_crc
-            from roms4me.handlers.registry import get_rom_extensions
-            _accepted = (set(get_rom_extensions(dats[0].name)) or None) if dats else None
-            rom_crc = _compute_crc(rom_file, _accepted)
-            if rom_crc:
-                scan.info(f"  CRC: {rom_crc}")
-            elif rom_file.suffix.lower() == ".chd":
-                from roms4me.analyzers.chd import read_chd_sha1
-                _sha1 = read_chd_sha1(rom_file)
-                scan.info(f"  CRC: unavailable (CD codec CHD) — SHA-1 from header: {_sha1}" if _sha1 else "  CRC: unavailable (CHD read failed)")
-            else:
-                scan.info("  CRC: unknown")
+                # Compute CRC once for this ROM
+                from roms4me.analyzers.pipeline import _compute_crc
+                from roms4me.handlers.registry import get_rom_extensions
+                _accepted = (set(get_rom_extensions(dats[0].name)) or None) if dats else None
+                rom_crc = _compute_crc(rom_file, _accepted)
+                if rom_crc:
+                    scan.info(f"  CRC: {rom_crc}")
+                elif rom_file.suffix.lower() == ".chd":
+                    from roms4me.analyzers.chd import read_chd_sha1
+                    _sha1 = read_chd_sha1(rom_file)
+                    scan.info(f"  CRC: unavailable (CD codec CHD) — SHA-1 from header: {_sha1}" if _sha1 else "  CRC: unavailable (CHD read failed)")
+                else:
+                    scan.info("  CRC: unknown")
 
-            # Run analysis against each DAT, log per-DAT results
-            all_suggestions = []
-            rom_inner_type = ""
-            for dat in dats:
-                scan.info(f"  [{dat.name}] ({len(dat.games)} games)", color="blue")
-                analysis = analyze_rom(rom_file, dat, verify_crc=True, precomputed_crc=rom_crc)
-                if analysis.rom_inner_type and not rom_inner_type:
-                    rom_inner_type = analysis.rom_inner_type
-                for err in analysis.errors:
-                    scan.info(f"    Note: {err}", color="yellow")
-
-                # Log this DAT's results immediately
-                if not analysis.suggestions:
-                    scan.info(f"    No matches")
-                for s in analysis.suggestions[:5]:
-                    if s.crc_match is True:
-                        scan.info(f"    ✓ {s.dat_game_name}", color="green")
-                        scan.info(f"          {s.reason}")
-                    elif s.crc_match is False:
-                        scan.info(f"    ✗ {s.dat_game_name}", color="red")
-                        scan.info(f"          Expected CRC: {s.expected_crc}  Actual: {s.actual_crc}")
-                    else:
-                        scan.info(f"    ? {s.dat_game_name}")
-                        scan.info(f"          {s.reason}")
-                if len(analysis.suggestions) > 5:
-                    scan.info(f"    ... and {len(analysis.suggestions) - 5} more")
-
-                for diag in analysis.diagnostics:
-                    scan.info(f"    {diag}", color="yellow")
-
-                all_suggestions.extend(analysis.suggestions)
-
-            # Deduplicate across DATs for DB update
-            seen = set()
-            unique_suggestions = []
-            for s in sorted(all_suggestions, key=lambda x: x.confidence, reverse=True):
-                if s.dat_game_name not in seen:
-                    seen.add(s.dat_game_name)
-                    unique_suggestions.append(s)
-
-            if not unique_suggestions:
-                continue
-
-            # Update DB and build export plan only for CRC matches
-            best = unique_suggestions[0]
-            export_plan = None
-            new_status = None
-            plan_label = ""
-            if best.crc_match is True:
-                new_status = "matched"
+                # Run analysis against each DAT, log per-DAT results
+                all_suggestions = []
+                rom_inner_type = ""
                 for dat in dats:
-                    ep = plan_export(rom_file, best, dat, system_name=system_name)
-                    if ep.steps:
-                        export_plan = ep
-                        break
-                plan_label = "modify" if export_plan and export_plan.steps else "ok"
-                if export_plan:
-                    scan.info(f"  Export plan → {export_plan.target_name}", color="blue")
-                    for step in export_plan.steps:
-                        scan.info(f"    {step.name}: {step.description}")
+                    scan.info(f"  [{dat.name}] ({len(dat.games)} games)", color="blue")
+                    analysis = analyze_rom(rom_file, dat, verify_crc=True, precomputed_crc=rom_crc)
+                    if analysis.rom_inner_type and not rom_inner_type:
+                        rom_inner_type = analysis.rom_inner_type
+                    for err in analysis.errors:
+                        scan.info(f"    Note: {err}", color="yellow")
 
-            # Always update rom_type from analysis, even without a match
-            if rom_inner_type:
-                for row in session.exec(
-                    select(ScanResult).where(
-                        ScanResult.system_id == system.id,
-                        ScanResult.file_name == filename,
-                    )
-                ).all():
-                    row.rom_type = rom_inner_type
-                session.commit()
+                    # Log this DAT's results immediately
+                    if not analysis.suggestions:
+                        scan.info(f"    No matches")
+                    for s in analysis.suggestions[:5]:
+                        if s.crc_match is True:
+                            scan.info(f"    ✓ {s.dat_game_name}", color="green")
+                            scan.info(f"          {s.reason}")
+                        elif s.crc_match is False:
+                            scan.info(f"    ✗ {s.dat_game_name}", color="red")
+                            scan.info(f"          Expected CRC: {s.expected_crc}  Actual: {s.actual_crc}")
+                        else:
+                            scan.info(f"    ? {s.dat_game_name}")
+                            scan.info(f"          {s.reason}")
+                    if len(analysis.suggestions) > 5:
+                        scan.info(f"    ... and {len(analysis.suggestions) - 5} more")
 
-            if new_status:
-                all_for_file = session.exec(
-                    select(ScanResult).where(
-                        ScanResult.system_id == system.id,
-                        ScanResult.file_name == filename,
-                    )
-                ).all()
+                    for diag in analysis.diagnostics:
+                        scan.info(f"    {diag}", color="yellow")
 
-                # Update the first row with the best match
-                if all_for_file:
-                    existing = all_for_file[0]
-                    existing.status = new_status
-                    existing.note = best.reason
-                    existing.plan = plan_label
-                    existing.game_name = best.dat_game_name
-                    existing.description = best.dat_game_name
-                    existing.expected_file_name = f"{best.dat_game_name}.zip"
-                    if rom_inner_type:
-                        existing.rom_type = rom_inner_type
+                    all_suggestions.extend(analysis.suggestions)
 
-                    # Remove duplicate rows for the same file (other language variants)
-                    for dup in all_for_file[1:]:
-                        session.delete(dup)
+                # Deduplicate across DATs for DB update
+                seen = set()
+                unique_suggestions = []
+                for s in sorted(all_suggestions, key=lambda x: x.confidence, reverse=True):
+                    if s.dat_game_name not in seen:
+                        seen.add(s.dat_game_name)
+                        unique_suggestions.append(s)
 
+                if not unique_suggestions:
+                    continue
+
+                # Update DB and build export plan only for CRC matches
+                best = unique_suggestions[0]
+                export_plan = None
+                new_status = None
+                plan_label = ""
+                if best.crc_match is True:
+                    new_status = "matched"
+                    for dat in dats:
+                        ep = plan_export(rom_file, best, dat, system_name=system_name)
+                        if ep.steps:
+                            export_plan = ep
+                            break
+                    plan_label = "modify" if export_plan and export_plan.steps else "ok"
+                    if export_plan:
+                        scan.info(f"  Export plan → {export_plan.target_name}", color="blue")
+                        for step in export_plan.steps:
+                            scan.info(f"    {step.name}: {step.description}")
+
+                # Always update rom_type from analysis, even without a match
+                if rom_inner_type:
+                    for row in session.exec(
+                        select(ScanResult).where(
+                            ScanResult.system_id == system.id,
+                            ScanResult.file_name == filename,
+                        )
+                    ).all():
+                        row.rom_type = rom_inner_type
                     session.commit()
 
-                    # Track matched files for cross-file cleanup below
-                    matched_files[filename] = best.dat_game_name
+                if new_status:
+                    all_for_file = session.exec(
+                        select(ScanResult).where(
+                            ScanResult.system_id == system.id,
+                            ScanResult.file_name == filename,
+                        )
+                    ).all()
 
-                    # Push live row update to frontend
-                    scan.row_update({
-                        "game_name": existing.game_name,
-                        "description": existing.description,
-                        "file_name": existing.file_name,
-                        "expected_file_name": existing.expected_file_name,
-                        "status": existing.status,
-                        "note": existing.note,
-                        "plan": existing.plan or "",
-                    })
+                    # Update the first row with the best match
+                    if all_for_file:
+                        existing = all_for_file[0]
+                        existing.status = new_status
+                        existing.note = best.reason
+                        existing.plan = plan_label
+                        existing.game_name = best.dat_game_name
+                        existing.description = best.dat_game_name
+                        existing.expected_file_name = f"{best.dat_game_name}.zip"
+                        if rom_inner_type:
+                            existing.rom_type = rom_inner_type
 
-            # Persist per-file log lines to every ScanResult row for this file
-            file_log = "\n".join(scan.lines[file_log_start:])
-            if file_log:
+                        # Remove duplicate rows for the same file (other language variants)
+                        for dup in all_for_file[1:]:
+                            session.delete(dup)
+
+                        session.commit()
+
+                        # Track matched files for cross-file cleanup below
+                        matched_files[filename] = best.dat_game_name
+
+                        # Push live row update to frontend
+                        scan.row_update({
+                            "game_name": existing.game_name,
+                            "description": existing.description,
+                            "file_name": existing.file_name,
+                            "expected_file_name": existing.expected_file_name,
+                            "status": existing.status,
+                            "note": existing.note,
+                            "plan": existing.plan or "",
+                        })
+
+                # Persist per-file log lines to every ScanResult row for this file
+                file_log = "\n".join(scan.lines[file_log_start:])
+                if file_log:
+                    for row in session.exec(
+                        select(ScanResult).where(
+                            ScanResult.system_id == system.id,
+                            ScanResult.file_name == filename,
+                        )
+                    ).all():
+                        row.log = file_log
+                    session.commit()
+
+            except Exception as exc:
+                log.exception("Analysis failed for %s", filename)
+                scan.info(f"  ERROR: {type(exc).__name__}: {exc}", color="red")
                 for row in session.exec(
                     select(ScanResult).where(
                         ScanResult.system_id == system.id,
                         ScanResult.file_name == filename,
                     )
                 ).all():
-                    row.log = file_log
+                    row.status = "error"
+                    row.note = f"{type(exc).__name__}: {exc}"
+                    row.log = "\n".join(scan.lines[file_log_start:])
                 session.commit()
 
         # Deduplicate: when multiple files match the same DAT game, keep the best one
