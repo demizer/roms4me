@@ -896,10 +896,11 @@ def _do_analyze(scan, system_name: str, files: list[str]):
                     scan.info(f"  ? {s.dat_game_name}")
                     scan.info(f"        {s.reason}")
 
-            # If all suggestions are CRC mismatches, show N64 diagnostic
+            # If all suggestions are CRC mismatches, show diagnostic with all N64 conversion attempts
             all_mismatch = unique_suggestions and all(s.crc_match is False for s in unique_suggestions)
             if all_mismatch:
                 from roms4me.analyzers.n64_byteorder import (
+                    _FORMAT_LABEL,
                     _read_rom_data as _n64_read,
                     detect_n64_format,
                     to_bigendian,
@@ -909,12 +910,25 @@ def _do_analyze(scan, system_name: str, files: list[str]):
                 if rom_bytes:
                     fmt = detect_n64_format(rom_bytes)
                     if fmt:
-                        scan.info(f"  N64 format detected: {fmt}", color="yellow")
-                        if fmt != "bigendian":
-                            normalized = to_bigendian(rom_bytes, fmt)
-                            norm_crc = f"{_zlib.crc32(normalized) & 0xFFFFFFFF:08x}"
-                            scan.info(f"  Normalized (BigEndian) CRC: {norm_crc}", color="yellow")
-                            scan.info(f"  Raw CRC: {unique_suggestions[0].actual_crc}", color="yellow")
+                        # Build full DAT CRC set for quick lookup
+                        dat_crcs: set[str] = set()
+                        for _d in dats:
+                            for _g in _d.games:
+                                for _r in _g.roms:
+                                    if _r.crc:
+                                        dat_crcs.add(_r.crc.lower())
+                        raw_crc = f"{_zlib.crc32(rom_bytes) & 0xFFFFFFFF:08x}"
+                        scan.info(f"  N64 format detected: {_FORMAT_LABEL.get(fmt, fmt)}", color="yellow")
+                        scan.info(f"  Raw CRC: {raw_crc} ({'in DAT' if raw_crc in dat_crcs else 'not in DAT'})", color="yellow")
+                        for try_fmt in ("byteswapped", "littleendian"):
+                            norm = to_bigendian(rom_bytes, try_fmt)
+                            norm_crc = f"{_zlib.crc32(norm) & 0xFFFFFFFF:08x}"
+                            in_dat = norm_crc in dat_crcs
+                            label = _FORMAT_LABEL.get(try_fmt, try_fmt)
+                            scan.info(
+                                f"  Tried as {label}: {norm_crc} → {'MATCH' if in_dat else 'no match'}",
+                                color="green" if in_dat else "yellow",
+                            )
                     else:
                         scan.info(f"  Not recognized as N64 ROM (magic: {rom_bytes[:4].hex()})", color="yellow")
 
