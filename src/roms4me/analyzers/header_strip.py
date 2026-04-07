@@ -133,6 +133,10 @@ def _read_rom_data(rom_path: Path, accepted_exts: set[str] | None = None) -> byt
                 if candidates:
                     best = max(candidates, key=lambda e: e.file_size)
                     return zf.read(best.filename)
+        elif rom_path.suffix.lower() == ".7z":
+            # Decompressing a 7z to strip a few header bytes is not worth it;
+            # disc images inside 7z archives never have copier headers.
+            return None
         else:
             return rom_path.read_bytes()
     except (zipfile.BadZipFile, OSError) as e:

@@ -860,6 +860,29 @@ def _do_analyze(scan, system_name: str, files: list[str]):
                 scan.info(f"  File not found", color="red")
                 continue
 
+            # List archive contents so it's clear which file produces the CRC
+            suffix = rom_file.suffix.lower()
+            if suffix == ".zip":
+                try:
+                    with zipfile.ZipFile(rom_file) as _zf:
+                        _entries = sorted(_zf.infolist(), key=lambda e: e.file_size, reverse=True)
+                        scan.info(f"  Archive ({len(_entries)} file(s)):")
+                        for _e in _entries:
+                            scan.info(f"    {_e.filename}  {_e.file_size:,} bytes  CRC: {_e.CRC & 0xFFFFFFFF:08x}")
+                except Exception:
+                    pass
+            elif suffix == ".7z":
+                try:
+                    import py7zr as _py7zr
+                    with _py7zr.SevenZipFile(rom_file, mode="r") as _szf:
+                        _entries_7z = sorted(_szf.list(), key=lambda e: e.uncompressed, reverse=True)
+                        scan.info(f"  Archive ({len(_entries_7z)} file(s)):")
+                        for _e in _entries_7z:
+                            _crc_str = f"{_e.crc32 & 0xFFFFFFFF:08x}" if _e.crc32 is not None else "no CRC stored"
+                            scan.info(f"    {_e.filename}  {_e.uncompressed:,} bytes  CRC: {_crc_str}")
+                except Exception:
+                    pass
+
             # Run analysis against each DAT, surfacing any analyzer errors
             all_suggestions = []
             all_diagnostics: list[str] = []
