@@ -77,6 +77,7 @@ def analyze_rom(
     accepted_exts: set[str] | None = set(get_rom_extensions(dat.name)) or None
 
     # Detect inner ROM type for archives and check format vs DAT
+    _inner_ext = ""
     if rom_path.suffix.lower() == ".zip":
         try:
             with zipfile.ZipFile(rom_path) as _zf:
@@ -86,20 +87,34 @@ def analyze_rom(
                     _cands = _entries
                 if _cands:
                     _best = max(_cands, key=lambda e: e.file_size)
-                    result.rom_inner_type = Path(_best.filename).suffix.lower().lstrip(".")
-                    # Flag if inner format is not the DAT's expected format
-                    if accepted_exts:
-                        _dat_exts = {Path(rom.name).suffix.lower() for game in dat.games for rom in game.roms if rom.name}
-                        _inner_ext = Path(_best.filename).suffix.lower()
-                        if _inner_ext and _inner_ext not in _dat_exts:
-                            _dat_fmt = ", ".join(sorted(_dat_exts)) or "unknown"
-                            result.errors.append(
-                                f"Format note: ROM inside zip is {_inner_ext}, "
-                                f"DAT expects {_dat_fmt}. "
-                                f"May need conversion (e.g. byte-order swap for N64)."
-                            )
+                    _inner_ext = Path(_best.filename).suffix.lower()
         except (zipfile.BadZipFile, OSError):
             pass
+    elif rom_path.suffix.lower() == ".7z":
+        try:
+            import py7zr
+            with py7zr.SevenZipFile(rom_path, mode="r") as _szf:
+                _entries_7z = [e for e in _szf.list() if e.is_file]
+                _cands_7z = [e for e in _entries_7z if Path(e.filename).suffix.lower() in accepted_exts] if accepted_exts else _entries_7z
+                if not _cands_7z:
+                    _cands_7z = _entries_7z
+                if _cands_7z:
+                    _best_7z = max(_cands_7z, key=lambda e: e.uncompressed)
+                    _inner_ext = Path(_best_7z.filename).suffix.lower()
+        except Exception:
+            pass
+
+    if _inner_ext:
+        result.rom_inner_type = _inner_ext.lstrip(".")
+        if accepted_exts:
+            _dat_exts = {Path(rom.name).suffix.lower() for game in dat.games for rom in game.roms if rom.name}
+            if _inner_ext and _inner_ext not in _dat_exts:
+                _dat_fmt = ", ".join(sorted(_dat_exts)) or "unknown"
+                result.errors.append(
+                    f"Format note: ROM inside archive is {_inner_ext}, "
+                    f"DAT expects {_dat_fmt}. "
+                    f"May need conversion (e.g. byte-order swap for N64)."
+                )
 
     # 1. File-based analyzers first — they can confirm matches directly
     for analyzer in _get_file_analyzers(dat.name):
@@ -236,6 +251,20 @@ def _compute_crc(rom_path: Path, accepted_exts: set[str] | None = None) -> str:
                 if candidates:
                     best = max(candidates, key=lambda e: e.file_size)
                     return f"{best.CRC & 0xFFFFFFFF:08x}"
+        elif rom_path.suffix.lower() == ".7z":
+            import py7zr
+            with py7zr.SevenZipFile(rom_path, mode="r") as szf:
+                entries = [e for e in szf.list() if e.is_file]
+                if accepted_exts:
+                    candidates = [e for e in entries if Path(e.filename).suffix.lower() in accepted_exts]
+                    if not candidates:
+                        candidates = entries
+                else:
+                    candidates = entries
+                if candidates:
+                    best = max(candidates, key=lambda e: e.uncompressed)
+                    if best.crc32 is not None:
+                        return f"{best.crc32 & 0xFFFFFFFF:08x}"
         elif rom_path.suffix.lower() == ".chd":
             from roms4me.analyzers.chd import ChdError, crc32_of_chd
             try:
