@@ -59,6 +59,7 @@ def analyze_rom(
     rom_path: Path,
     dat: DatFile,
     verify_crc: bool = True,
+    precomputed_crc: str = "",
 ) -> AnalysisResult:
     """Run all analyzers on a ROM file, then optionally verify CRC.
 
@@ -116,10 +117,13 @@ def analyze_rom(
                     f"May need conversion (e.g. byte-order swap for N64)."
                 )
 
+    # Compute CRC once — reused by analyzers and verification step
+    crc = precomputed_crc or _compute_crc(rom_path, accepted_exts)
+
     # 1. File-based analyzers first — they can confirm matches directly
     for analyzer in _get_file_analyzers(dat.name):
         try:
-            suggestions = analyzer.analyze_file(rom_path, dat)
+            suggestions = analyzer.analyze_file(rom_path, dat, crc=crc)
             for s in suggestions:
                 if s.dat_game_name not in seen_games:
                     seen_games.add(s.dat_game_name)
@@ -129,7 +133,7 @@ def analyze_rom(
             log.warning("%s on %s", msg, rom_stem)
             result.errors.append(msg)
 
-    # If header strip found a confirmed match, return early
+    # If a file-based analyzer found a confirmed match, return early
     if any(s.crc_match is True for s in result.suggestions):
         result.suggestions.sort(key=lambda s: (s.crc_match is True, s.confidence), reverse=True)
         return result
@@ -151,7 +155,7 @@ def analyze_rom(
         return result
 
     # 3. CRC verify name-based candidates (try raw CRC, then header-stripped)
-    actual_crc = _compute_crc(rom_path, accepted_exts)
+    actual_crc = crc
     stripped_crcs = _compute_stripped_crcs(rom_path, accepted_exts, dat.name)
     if not actual_crc:
         return result

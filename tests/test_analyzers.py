@@ -134,7 +134,7 @@ def test_analyzer_exception_populates_errors(tmp_path):
     bad_analyzer = type(
         "BadAnalyzer",
         (),
-        {"name": "bad", "analyze_file": lambda self, p, d: (_ for _ in ()).throw(RuntimeError("disk on fire"))},
+        {"name": "bad", "analyze_file": lambda self, p, d, crc="": (_ for _ in ()).throw(RuntimeError("disk on fire"))},
     )()
 
     original = pl.BASE_FILE_ANALYZERS
@@ -160,7 +160,7 @@ def test_analyzer_exception_does_not_crash_pipeline(tmp_path):
     bad_analyzer = type(
         "BadAnalyzer",
         (),
-        {"name": "bad", "analyze_file": lambda self, p, d: (_ for _ in ()).throw(RuntimeError("oops"))},
+        {"name": "bad", "analyze_file": lambda self, p, d, crc="": (_ for _ in ()).throw(RuntimeError("oops"))},
     )()
 
     original = pl.BASE_FILE_ANALYZERS

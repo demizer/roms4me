@@ -883,21 +883,46 @@ def _do_analyze(scan, system_name: str, files: list[str]):
                 except Exception:
                     pass
 
-            # Run analysis against each DAT, surfacing any analyzer errors
+            # Compute CRC once for this ROM
+            from roms4me.analyzers.pipeline import _compute_crc
+            from roms4me.handlers.registry import get_rom_extensions
+            _accepted = (set(get_rom_extensions(dats[0].name)) or None) if dats else None
+            rom_crc = _compute_crc(rom_file, _accepted)
+            scan.info(f"  CRC: {rom_crc}" if rom_crc else "  CRC: unknown")
+
+            # Run analysis against each DAT, log per-DAT results
             all_suggestions = []
-            all_diagnostics: list[str] = []
-            rom_inner_type = ""  # populated from first analysis result
+            rom_inner_type = ""
             for dat in dats:
-                scan.info(f"  Checking: {dat.name} ({len(dat.games)} games)", color="blue")
-                analysis = analyze_rom(rom_file, dat, verify_crc=True)
-                all_suggestions.extend(analysis.suggestions)
-                all_diagnostics.extend(analysis.diagnostics)
+                scan.info(f"  [{dat.name}] ({len(dat.games)} games)", color="blue")
+                analysis = analyze_rom(rom_file, dat, verify_crc=True, precomputed_crc=rom_crc)
                 if analysis.rom_inner_type and not rom_inner_type:
                     rom_inner_type = analysis.rom_inner_type
                 for err in analysis.errors:
-                    scan.info(f"  Note: {err}", color="yellow")
+                    scan.info(f"    Note: {err}", color="yellow")
 
-            # Deduplicate and sort
+                # Log this DAT's results immediately
+                if not analysis.suggestions:
+                    scan.info(f"    No matches")
+                for s in analysis.suggestions[:5]:
+                    if s.crc_match is True:
+                        scan.info(f"    ✓ {s.dat_game_name}", color="green")
+                        scan.info(f"          {s.reason}")
+                    elif s.crc_match is False:
+                        scan.info(f"    ✗ {s.dat_game_name}", color="red")
+                        scan.info(f"          Expected CRC: {s.expected_crc}  Actual: {s.actual_crc}")
+                    else:
+                        scan.info(f"    ? {s.dat_game_name}")
+                        scan.info(f"          {s.reason}")
+                if len(analysis.suggestions) > 5:
+                    scan.info(f"    ... and {len(analysis.suggestions) - 5} more")
+
+                for diag in analysis.diagnostics:
+                    scan.info(f"    {diag}", color="yellow")
+
+                all_suggestions.extend(analysis.suggestions)
+
+            # Deduplicate across DATs for DB update
             seen = set()
             unique_suggestions = []
             for s in sorted(all_suggestions, key=lambda x: x.confidence, reverse=True):
@@ -905,34 +930,8 @@ def _do_analyze(scan, system_name: str, files: list[str]):
                     seen.add(s.dat_game_name)
                     unique_suggestions.append(s)
 
-            # Log results
             if not unique_suggestions:
-                from roms4me.analyzers.pipeline import _compute_crc
-                crc = _compute_crc(rom_file)
-                diag = f"CRC: {crc}" if crc else "CRC: unknown"
-                scan.info(f"  No matches found ({diag})")
-                for msg in all_diagnostics:
-                    scan.info(f"  {msg}", color="yellow")
                 continue
-
-            for s in unique_suggestions[:3]:
-                if s.crc_match is True:
-                    scan.info(f"  ✓ {s.dat_game_name}", color="green")
-                    scan.info(f"        {s.reason}")
-                    scan.info(f"            - CRC MATCH: {s.actual_crc}")
-                elif s.crc_match is False:
-                    scan.info(f"  ✗ {s.dat_game_name}", color="red")
-                    scan.info(f"        {s.reason}")
-                    scan.info(f"            - CRC MISMATCH")
-                    scan.info(f"            - Expected: {s.expected_crc}")
-                    scan.info(f"            - Actual:   {s.actual_crc}")
-                else:
-                    scan.info(f"  ? {s.dat_game_name}")
-                    scan.info(f"        {s.reason}")
-
-            if not any(s.crc_match is True for s in unique_suggestions):
-                for msg in all_diagnostics:
-                    scan.info(f"  {msg}", color="yellow")
 
             # Update DB and build export plan only for CRC matches
             best = unique_suggestions[0]

@@ -96,7 +96,7 @@ class N64ByteOrderAnalyzer:
         """Name-only analysis not applicable — file access required."""
         return []
 
-    def analyze_file(self, rom_path: Path, dat: DatFile) -> list[Suggestion]:
+    def analyze_file(self, rom_path: Path, dat: DatFile, crc: str = "") -> list[Suggestion]:
         """Read ROM, try all N64 byte-order conversions, lookup normalized CRC in DAT.
 
         Tries both ByteSwapped→BigEndian and LittleEndian→BigEndian conversions

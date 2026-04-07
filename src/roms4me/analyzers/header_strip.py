@@ -40,7 +40,7 @@ class HeaderStripAnalyzer:
         """
         return []
 
-    def analyze_file(self, rom_path: Path, dat: DatFile) -> list[Suggestion]:
+    def analyze_file(self, rom_path: Path, dat: DatFile, crc: str = "") -> list[Suggestion]:
         """Analyze a ROM file by stripping headers and checking CRC matches."""
         from roms4me.handlers.registry import get_rom_extensions
         accepted = set(get_rom_extensions(dat.name)) or None
