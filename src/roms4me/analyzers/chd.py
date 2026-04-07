@@ -480,7 +480,7 @@ def _decompress_cd_flac(data: bytes, frames: int, sector_bytes: int) -> bytes:
     num_samples = sector_bytes // 4
 
     try:
-        pcm = decode_flac_frames(data, num_samples)
+        pcm = decode_flac_frames(data, num_samples, swap_endian=True)
     except FlacError as e:
         raise ChdError(f"FLAC decode failed: {e}") from e
 

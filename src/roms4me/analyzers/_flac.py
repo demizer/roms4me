@@ -57,11 +57,12 @@ class _BitReader:
         return (self._pos + 7) >> 3
 
 
-def decode_flac_frames(data: bytes, expected_samples: int) -> bytes:
-    """Decode FLAC frames from raw data. Returns PCM bytes (16-bit LE, interleaved stereo).
+def decode_flac_frames(data: bytes, expected_samples: int, swap_endian: bool = False) -> bytes:
+    """Decode FLAC frames from raw data. Returns PCM bytes (16-bit, interleaved stereo).
 
     Decodes enough frames to produce at least `expected_samples` stereo sample pairs.
-    Each sample pair = 4 bytes (2 bytes L + 2 bytes R, little-endian).
+    Each sample pair = 4 bytes (2 bytes L + 2 bytes R).
+    If swap_endian is True, byte-swaps each 16-bit sample (BE output).
     """
     bits = _BitReader(data)
     output = bytearray()
@@ -122,46 +123,45 @@ def decode_flac_frames(data: bytes, expected_samples: int) -> bytes:
         # Decode subframes
         channels_data: list[list[int]] = []
         for ch in range(num_channels):
-            # For mid-side etc., adjust bps
+            # For stereo decorrelation modes, the side channel gets +1 bit.
+            # FLAC spec: ch_code 8=left/side, 9=right/side, 10=mid/side
             effective_bps = bps
-            if ch_code == 9 and ch == 1:  # mid-side, side channel gets +1 bit
+            if ch_code == 8 and ch == 1:    # left/side: ch1=side gets +1
                 effective_bps += 1
-            elif ch_code == 10 and ch == 0:  # side-right, side channel gets +1 bit
+            elif ch_code == 9 and ch == 0:  # right/side: ch0=side gets +1
                 effective_bps += 1
-            elif ch_code == 8 and ch == 1:  # left-side, side channel gets +1 bit
+            elif ch_code == 10 and ch == 1: # mid/side: ch1=side gets +1
                 effective_bps += 1
 
             samples = _decode_subframe(bits, block_size, effective_bps)
             channels_data.append(samples)
 
-        # Decorrelate if needed
-        if ch_code == 8:  # left-side
+        # Decorrelate if needed (FLAC spec channel assignments)
+        if ch_code == 8:  # left/side: ch0=left, ch1=side → right = left - side
             for i in range(block_size):
                 channels_data[1][i] = channels_data[0][i] - channels_data[1][i]
-        elif ch_code == 9:  # mid-side → left=(mid+side+1)>>1 side=mid-side... actually:
+        elif ch_code == 9:  # right/side: ch0=side, ch1=right → left = side + right
+            for i in range(block_size):
+                channels_data[0][i] = channels_data[0][i] + channels_data[1][i]
+        elif ch_code == 10:  # mid/side: ch0=mid, ch1=side
             for i in range(block_size):
                 mid = channels_data[0][i]
                 side = channels_data[1][i]
                 mid = (mid << 1) | (side & 1)
                 channels_data[0][i] = (mid + side) >> 1
                 channels_data[1][i] = (mid - side) >> 1
-        elif ch_code == 10:  # side-right
-            for i in range(block_size):
-                channels_data[0][i] = channels_data[0][i] + channels_data[1][i]
 
-        # Align to byte boundary
+        # Align to byte boundary and skip frame CRC-16
         bits.align_to_byte()
-
-        # Frame CRC-16 (skip)
         _crc16 = bits.read(16)
 
-        # Interleave and output as 16-bit LE
+        # Interleave and output as 16-bit samples
+        fmt = ">h" if swap_endian else "<h"
         for i in range(block_size):
             for ch in range(min(num_channels, 2)):
                 val = channels_data[ch][i]
-                # Clamp to 16-bit signed
                 val = max(-32768, min(32767, val))
-                output.extend(struct.pack("<h", val))
+                output.extend(struct.pack(fmt, val))
 
     return bytes(output)
 

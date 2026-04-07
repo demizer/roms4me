@@ -887,13 +887,15 @@ def _do_analyze(scan, system_name: str, files: list[str]):
                 from roms4me.analyzers.pipeline import _compute_crc
                 from roms4me.handlers.registry import get_rom_extensions
                 _accepted = (set(get_rom_extensions(dats[0].name)) or None) if dats else None
+                if rom_file.suffix.lower() == ".chd":
+                    scan.info("  Computing CHD CRC (decompressing hunks)...", color="yellow")
                 rom_crc = _compute_crc(rom_file, _accepted)
                 if rom_crc:
                     scan.info(f"  CRC: {rom_crc}")
                 elif rom_file.suffix.lower() == ".chd":
                     from roms4me.analyzers.chd import read_chd_sha1
                     _sha1 = read_chd_sha1(rom_file)
-                    scan.info(f"  CRC: unavailable (CD codec CHD) — SHA-1 from header: {_sha1}" if _sha1 else "  CRC: unavailable (CHD read failed)")
+                    scan.info(f"  CRC: unavailable — SHA-1 from header: {_sha1}" if _sha1 else "  CRC: unavailable (CHD read failed)")
                 else:
                     scan.info("  CRC: unknown")
 
