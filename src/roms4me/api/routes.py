@@ -1174,7 +1174,9 @@ async def export_roms(system_name: str, req: dict) -> dict:
     if archive_format not in {"zip", "7z"}:
         archive_format = "zip"
     rom_only = bool(req.get("rom_only", True))
-    convert_byteorder = bool(req.get("convert_byteorder", False))
+    system_options: dict[str, bool] = req.get("system_options", {})
+    convert_byteorder = bool(system_options.get("convert_byteorder", False))
+    extract_disc_image = bool(system_options.get("extract_disc_image", False))
 
     if not files:
         raise HTTPException(status_code=400, detail="No files specified")
@@ -1190,7 +1192,8 @@ async def export_roms(system_name: str, req: dict) -> dict:
 
     def run():
         try:
-            _do_export(scan, system_name, files, Path(dest), region_priority, archive_format, rom_only, convert_byteorder)
+            _do_export(scan, system_name, files, Path(dest), region_priority,
+                       archive_format, rom_only, convert_byteorder, extract_disc_image)
         finally:
             scan_log_mod.scan_running = False
 
@@ -1248,7 +1251,8 @@ def _apply_region_priority(
 
 def _do_export(scan, system_name: str, files: list[str], dest_dir: Path,
                region_priority: list[str] | None = None, archive_format: str = "zip",
-               rom_only: bool = True, convert_byteorder: bool = False):
+               rom_only: bool = True, convert_byteorder: bool = False,
+               extract_disc_image: bool = False):
     """Execute exports for selected ROMs (called from background thread)."""
     from roms4me.analyzers.base import Suggestion
     from roms4me.exporters.executor import execute_export
@@ -1391,7 +1395,8 @@ def _do_export(scan, system_name: str, files: list[str], dest_dir: Path,
             try:
                 out_path = execute_export(rom_file, export_plan, dest_dir,
                                           archive_format=archive_format, rom_only=rom_only,
-                                          convert_byteorder=convert_byteorder)
+                                          convert_byteorder=convert_byteorder,
+                                          extract_disc_image=extract_disc_image)
                 scan.info(f"  → {out_path.name}", color="green")
                 exported += 1
             except Exception as e:

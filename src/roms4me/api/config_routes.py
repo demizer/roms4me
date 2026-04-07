@@ -11,6 +11,7 @@ from roms4me.core.config import (
     set_theme,
 )
 from roms4me.core.paths import get_config_path
+from roms4me.exporters.options import get_system_export_options
 
 router = APIRouter(prefix="/api/config", tags=["config"])
 
@@ -53,9 +54,15 @@ async def put_saves_path(req: dict) -> dict:
 
 @router.get("/export-settings/{system_name}")
 async def get_export_settings_route(system_name: str) -> dict:
-    """Get export settings for a system."""
+    """Get export settings and available system-specific options."""
     s = get_export_settings(system_name)
-    return s.model_dump()
+    data = s.model_dump(exclude={"convert_byteorder"})
+    # Include option definitions so the frontend can render dynamically
+    options = get_system_export_options(system_name)
+    data["available_options"] = [
+        {"id": o.id, "label": o.label, "default": o.default} for o in options
+    ]
+    return data
 
 
 @router.put("/export-settings/{system_name}")
@@ -64,13 +71,17 @@ async def put_export_settings_route(system_name: str, req: dict) -> dict:
     archive_format = req.get("archive_format", "zip")
     if archive_format not in ("zip", "7z"):
         archive_format = "zip"
+    system_options = req.get("system_options", {})
+    # Only keep options that are actually defined for this system
+    valid_ids = {o.id for o in get_system_export_options(system_name)}
+    system_options = {k: bool(v) for k, v in system_options.items() if k in valid_ids}
     s = ExportSettings(
         dest=req.get("dest", ""),
         rom_only=bool(req.get("rom_only", True)),
         one_game_one_rom=bool(req.get("one_game_one_rom", True)),
         archive_format=archive_format,
         region_priority=req.get("region_priority", "USA, World, Europe, Japan"),
-        convert_byteorder=bool(req.get("convert_byteorder", False)),
+        system_options=system_options,
     )
     set_export_settings(system_name, s)
-    return s.model_dump()
+    return s.model_dump(exclude={"convert_byteorder"})

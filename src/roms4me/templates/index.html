@@ -172,10 +172,8 @@
                         <input type="checkbox" id="export-use-7z">
                         Compress with 7z (smaller files, same ROM data)
                     </label>
-                    <label>
-                        <input type="checkbox" id="export-convert-byteorder">
-                        Convert ROM to DAT format (e.g. .v64 → .z64 for N64)
-                    </label>
+                    <!-- System-specific options rendered dynamically -->
+                    <div id="export-system-options"></div>
                 </fieldset>
                 <div id="export-region-row">
                     <label for="export-region-input">Region priority:</label>

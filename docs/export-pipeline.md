@@ -14,12 +14,13 @@ plan_export(rom_path, suggestion, dat, system_name)
     │     CompressPackageFixer
     │
     └── SYSTEM_FIXERS[system_name]   ← run only for matching systems
-          (empty by default — add entries here to extend)
+          N64ByteOrderFixer, ...
           
           → ExportPlan(target_name, steps=[ExportStep, ...])
 
-execute_export(rom_path, plan, dest_dir, archive_format, rom_only)
-    └── applies each ExportStep in order → output archive
+execute_export(rom_path, plan, dest_dir, archive_format, rom_only,
+               convert_byteorder, extract_disc_image)
+    └── applies each ExportStep in order → output file/archive
 ```
 
 ## ExportFixer protocol
@@ -61,12 +62,49 @@ These run for every system. They are defined in `src/roms4me/exporters/fixers.py
 ```python
 # src/roms4me/exporters/fixers.py
 SYSTEM_FIXERS: dict[str, list] = {
-    # "PlayStation": [ChdPackageFixer()],
-    # "Dreamcast":   [ChdPackageFixer()],
+    "Nintendo 64": [N64ByteOrderFixer()],
 }
 ```
 
 System fixers run **after** the base fixers, so they can build on or complement the base steps. Multiple keys can match the same DAT name; all matching fixer lists are merged in registry order.
+
+## System-specific export options (`SYSTEM_EXPORT_OPTIONS`)
+
+Export settings that only apply to certain systems are declared in `src/roms4me/exporters/options.py`. Each option is a boolean toggle shown in the export-settings dialog only when the target system matches.
+
+```python
+# src/roms4me/exporters/options.py
+SYSTEM_EXPORT_OPTIONS: dict[str, list[ExportOption]] = {
+    "Nintendo 64": [
+        ExportOption(id="convert_byteorder", label="Convert ROM to DAT format ..."),
+    ],
+    "PlayStation 2": [
+        ExportOption(id="extract_disc_image", label="Extract disc images from archives ..."),
+    ],
+}
+```
+
+Keys use the same case-insensitive substring matching as `SYSTEM_FIXERS` and `ROM_EXTENSIONS`. The UI, API, and config persistence all read from this registry — adding a new option here is all that's needed for it to appear in the dialog for the right systems.
+
+### How it flows
+
+1. **Frontend** — `GET /api/config/export-settings/{system}` returns saved settings plus an `available_options` list. The dialog renders checkboxes dynamically from that list.
+2. **Config** — User choices are stored in `ExportSettings.system_options: dict[str, bool]`, keyed by option `id`. Universal settings (`rom_only`, `one_game_one_rom`, etc.) remain as top-level fields.
+3. **Backend** — `POST /api/export/{system}` reads individual flags from the `system_options` dict and passes them to `execute_export()`.
+
+### Current system options
+
+| Option ID | Systems | What it does |
+|---|---|---|
+| `convert_byteorder` | Nintendo 64 | Converts ROM byte order to match the DAT format (e.g. .v64 → .z64) |
+| `extract_disc_image` | PS1, PS2, PSP, Dreamcast, Saturn, Sega CD | Extracts disc images (ISO, CHD, BIN, etc.) from zip/7z as loose files instead of re-archiving |
+
+### Adding a new system-specific option
+
+1. Add an `ExportOption` entry to `SYSTEM_EXPORT_OPTIONS` in `exporters/options.py`.
+2. Handle the option's `id` in `routes.py` (read from `system_options`) and `executor.py` (apply the behaviour).
+
+No template, JavaScript, or config model changes are needed.
 
 ## Adding a system-specific fixer
 

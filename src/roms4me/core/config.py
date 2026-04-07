@@ -33,7 +33,17 @@ class ExportSettings(BaseModel):
     one_game_one_rom: bool = True
     archive_format: str = "zip"  # "zip" | "7z"
     region_priority: str = "USA, World, Europe, Japan"
-    convert_byteorder: bool = False
+    system_options: dict[str, bool] = {}
+
+    def __init__(self, **data: object) -> None:
+        # Migrate legacy convert_byteorder into system_options before validation
+        if "convert_byteorder" in data:
+            cb = data.pop("convert_byteorder")
+            if cb:
+                opts = data.setdefault("system_options", {})
+                if isinstance(opts, dict) and "convert_byteorder" not in opts:
+                    opts["convert_byteorder"] = bool(cb)
+        super().__init__(**data)
 
 
 class AppConfig(BaseModel):

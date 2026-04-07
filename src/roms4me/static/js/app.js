@@ -13,7 +13,7 @@ const exportQueue = [];
 
 /**
  * Settings snapshot captured at queue-add time, keyed by system name.
- * @type {Record<string, {dest: string, rom_only: boolean, archive_format: string, region_priority: string}>}
+ * @type {Record<string, {dest: string, rom_only: boolean, archive_format: string, region_priority: string, system_options: Record<string, boolean>}>}
  */
 const exportSystemSettings = {};
 
@@ -503,14 +503,35 @@ function _openExportSettingsModal(settings, rowCount) {
     document.getElementById("export-rom-only").checked = settings.rom_only !== false;
     document.getElementById("export-one-game").checked = settings.one_game_one_rom !== false;
     document.getElementById("export-use-7z").checked = settings.archive_format === "7z";
-    document.getElementById("export-convert-byteorder").checked = settings.convert_byteorder === true;
     document.getElementById("export-region-input").value =
         settings.region_priority || "USA, World, Europe, Japan";
     document.getElementById("export-conflict-notice").hidden = true;
     document.getElementById("export-settings-cancel").hidden = false;
-    for (const id of ["export-dest-input", "export-rom-only", "export-one-game",
-                       "export-use-7z", "export-convert-byteorder", "export-region-input"]) {
+
+    // Render system-specific option checkboxes
+    const sysOptsContainer = document.getElementById("export-system-options");
+    sysOptsContainer.innerHTML = "";
+    const availableOptions = settings.available_options || [];
+    const savedOpts = settings.system_options || {};
+    for (const opt of availableOptions) {
+        const label = document.createElement("label");
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.id = "export-sysopt-" + opt.id;
+        cb.dataset.sysopt = opt.id;
+        cb.checked = savedOpts[opt.id] !== undefined ? savedOpts[opt.id] : opt.default;
+        label.appendChild(cb);
+        label.appendChild(document.createTextNode("\n                        " + opt.label + "\n                    "));
+        sysOptsContainer.appendChild(label);
+    }
+
+    const allInputIds = ["export-dest-input", "export-rom-only", "export-one-game",
+                         "export-use-7z", "export-region-input"];
+    for (const id of allInputIds) {
         document.getElementById(id).disabled = false;
+    }
+    for (const cb of sysOptsContainer.querySelectorAll("input[type=checkbox]")) {
+        cb.disabled = false;
     }
 
     // Region row visible only when one_game_one_rom is on
@@ -536,9 +557,14 @@ document.getElementById("export-settings-confirm").addEventListener("click", () 
     const romOnly = document.getElementById("export-rom-only").checked;
     const oneGame = document.getElementById("export-one-game").checked;
     const use7z = document.getElementById("export-use-7z").checked;
-    const convertByteorder = document.getElementById("export-convert-byteorder").checked;
     const regionRaw = document.getElementById("export-region-input").value.trim();
     const regionPriority = regionRaw ? regionRaw.split(",").map((s) => s.trim()).filter(Boolean) : [];
+
+    // Collect system-specific options
+    const systemOptions = {};
+    for (const cb of document.querySelectorAll("#export-system-options input[data-sysopt]")) {
+        systemOptions[cb.dataset.sysopt] = cb.checked;
+    }
 
     // Save settings to config
     fetchJson("/api/config/export-settings/" + encodeURIComponent(currentSystem), {
@@ -550,7 +576,7 @@ document.getElementById("export-settings-confirm").addEventListener("click", () 
             one_game_one_rom: oneGame,
             archive_format: use7z ? "7z" : "zip",
             region_priority: regionRaw,
-            convert_byteorder: convertByteorder,
+            system_options: systemOptions,
         }),
     }).catch(() => {});
 
@@ -629,8 +655,11 @@ document.getElementById("export-settings-confirm").addEventListener("click", () 
         // Gray out settings — items are already queued
         document.getElementById("export-settings-cancel").hidden = true;
         for (const id of ["export-dest-input", "export-rom-only", "export-one-game",
-                           "export-use-7z", "export-convert-byteorder", "export-region-input"]) {
+                           "export-use-7z", "export-region-input"]) {
             document.getElementById(id).disabled = true;
+        }
+        for (const cb of document.querySelectorAll("#export-system-options input[data-sysopt]")) {
+            cb.disabled = true;
         }
         exportQueue.push(...finalItems);
         updateQueueButton();
@@ -646,7 +675,7 @@ document.getElementById("export-settings-confirm").addEventListener("click", () 
         rom_only: romOnly,
         archive_format: use7z ? "7z" : "zip",
         region_priority: regionRaw,
-        convert_byteorder: convertByteorder,
+        system_options: systemOptions,
     };
 
     exportQueue.push(...finalItems);
@@ -798,7 +827,7 @@ async function processQueue() {
             : [];
         const archiveFormat = s.archive_format || "zip";
         const romOnly = s.rom_only !== false;
-        const convertByteorder = s.convert_byteorder === true;
+        const systemOptions = s.system_options || {};
         const files = items.map((i) => i.file_name);
 
         appendScanLogLine(verifyLog, "[blue]" + system + " → " + dest);
@@ -811,7 +840,7 @@ async function processQueue() {
                     region_priority: regionPriority,
                     archive_format: archiveFormat,
                     rom_only: romOnly,
-                    convert_byteorder: convertByteorder,
+                    system_options: systemOptions,
                 }),
             });
             if (start.status === "already_running") {
