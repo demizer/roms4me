@@ -22,6 +22,16 @@ HEADER_EXTENSIONS = {
 # needs the conversion.
 _N64_EXTS: frozenset[str] = frozenset({".z64", ".v64", ".n64"})
 
+# Map N64 file extension → canonical byte-order format name
+_N64_EXT_TO_FMT: dict[str, str] = {
+    ".z64": "bigendian",
+    ".v64": "byteswapped",
+    ".n64": "littleendian",
+}
+
+# Map byte-order format name → canonical extension
+_N64_FMT_TO_EXT: dict[str, str] = {v: k for k, v in _N64_EXT_TO_FMT.items()}
+
 
 def _inner_ext_from_zip(
     rom_file: Path,
@@ -202,15 +212,61 @@ ALL_FIXERS = [
     ZipPackageFixer(),
 ]
 
+class N64ByteOrderFixer:
+    """Suggests a byte-order conversion step when the ROM format differs from the DAT.
+
+    Only suggests when the detected format (via magic bytes) disagrees with the
+    format the DAT entry expects (determined from the DAT ROM extension).
+    The step is advisory — the executor applies it only when the user has opted
+    in via the ``convert_byteorder`` export setting.
+    """
+
+    name = "convert_byteorder"
+
+    def suggest(self, rom_file: Path, rom_data: bytes, dat_game_name: str,
+                dat_rom_name: str, dat_rom_ext: str,
+                accepted_exts: set[str] | None = None) -> list[ExportStep]:
+        """Suggest byte-order conversion when ROM format ≠ DAT expected format."""
+        from roms4me.analyzers.n64_byteorder import _FORMAT_LABEL, detect_n64_format
+
+        if rom_file.suffix.lower() == ".zip":
+            inner_ext = _inner_ext_from_zip(rom_file, accepted_exts)
+        else:
+            inner_ext = rom_file.suffix.lower()
+
+        # Only applicable if both current and expected extensions are N64 variants
+        if inner_ext not in _N64_EXTS or dat_rom_ext.lower() not in _N64_EXTS:
+            return []
+
+        # Detect actual byte order from magic bytes
+        current_fmt = detect_n64_format(rom_data) or _N64_EXT_TO_FMT.get(inner_ext, "")
+        target_fmt = _N64_EXT_TO_FMT.get(dat_rom_ext.lower(), "")
+
+        if not current_fmt or not target_fmt or current_fmt == target_fmt:
+            return []
+
+        current_label = _FORMAT_LABEL.get(current_fmt, current_fmt)
+        target_label = _FORMAT_LABEL.get(target_fmt, target_fmt)
+        new_ext = _N64_FMT_TO_EXT.get(target_fmt, dat_rom_ext.lower())
+
+        return [ExportStep(
+            name="convert_byteorder",
+            description=f"Convert byte order: {current_label} → {target_label}",
+            params={
+                "from_fmt": current_fmt,
+                "to_fmt": target_fmt,
+                "new_ext": new_ext,
+            },
+        )]
+
+
 # System-specific fixers — keyed by a substring that must appear in the DAT
 # system name (case-insensitive), same matching convention as ROM_EXTENSIONS in
 # handlers/registry.py.  Add new entries here to extend the export pipeline for
 # a system without touching the base fixers.
-#
-# Example:
-#   "PlayStation": [ChdPackageFixer()],
-#   "Dreamcast":   [ChdPackageFixer()],
-SYSTEM_FIXERS: dict[str, list] = {}
+SYSTEM_FIXERS: dict[str, list] = {
+    "Nintendo 64": [N64ByteOrderFixer()],
+}
 
 
 def get_system_fixers(dat_name: str) -> list:

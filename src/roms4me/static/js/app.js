@@ -484,6 +484,7 @@ function _openExportSettingsModal(settings, rowCount) {
     document.getElementById("export-rom-only").checked = settings.rom_only !== false;
     document.getElementById("export-one-game").checked = settings.one_game_one_rom !== false;
     document.getElementById("export-use-7z").checked = settings.archive_format === "7z";
+    document.getElementById("export-convert-byteorder").checked = settings.convert_byteorder === true;
     document.getElementById("export-region-input").value =
         settings.region_priority || "USA, World, Europe, Japan";
     document.getElementById("export-conflict-notice").hidden = true;
@@ -510,6 +511,7 @@ document.getElementById("export-settings-confirm").addEventListener("click", () 
     const romOnly = document.getElementById("export-rom-only").checked;
     const oneGame = document.getElementById("export-one-game").checked;
     const use7z = document.getElementById("export-use-7z").checked;
+    const convertByteorder = document.getElementById("export-convert-byteorder").checked;
     const regionRaw = document.getElementById("export-region-input").value.trim();
     const regionPriority = regionRaw ? regionRaw.split(",").map((s) => s.trim()).filter(Boolean) : [];
 
@@ -523,6 +525,7 @@ document.getElementById("export-settings-confirm").addEventListener("click", () 
             one_game_one_rom: oneGame,
             archive_format: use7z ? "7z" : "zip",
             region_priority: regionRaw,
+            convert_byteorder: convertByteorder,
         }),
     }).catch(() => {});
 
@@ -615,6 +618,7 @@ document.getElementById("export-settings-confirm").addEventListener("click", () 
         rom_only: romOnly,
         archive_format: use7z ? "7z" : "zip",
         region_priority: regionRaw,
+        convert_byteorder: convertByteorder,
     };
 
     exportQueue.push(...finalItems);
@@ -670,7 +674,7 @@ function showQueue() {
     for (const [system, items] of Object.entries(bySystem)) {
         const s = exportSystemSettings[system] || {};
         const fmt = s.archive_format === "7z" ? "7z" : "zip";
-        const flags = [s.dest || "(no destination)", fmt, s.rom_only !== false ? "ROM only" : null].filter(Boolean);
+        const flags = [s.dest || "(no destination)", fmt, s.rom_only !== false ? "ROM only" : null, s.convert_byteorder ? "convert byte order" : null].filter(Boolean);
         appendScanLogLine(verifyLog, "[blue]" + system + " — " + flags.join(" · ") + " (" + items.length + " item" + (items.length !== 1 ? "s" : "") + ")");
         for (const item of items) {
             const plan = item.plan ? " [" + item.plan + "]" : "";
@@ -766,6 +770,7 @@ async function processQueue() {
             : [];
         const archiveFormat = s.archive_format || "zip";
         const romOnly = s.rom_only !== false;
+        const convertByteorder = s.convert_byteorder === true;
         const files = items.map((i) => i.file_name);
 
         appendScanLogLine(verifyLog, "[blue]" + system + " → " + dest);
@@ -778,6 +783,7 @@ async function processQueue() {
                     region_priority: regionPriority,
                     archive_format: archiveFormat,
                     rom_only: romOnly,
+                    convert_byteorder: convertByteorder,
                 }),
             });
             if (start.status === "already_running") {
@@ -969,12 +975,14 @@ async function showRomAnalysis(row, activeTab = "data") {
             const dest = exportSettings.dest || "(no destination set)";
             const fmt = exportSettings.archive_format === "7z" ? "7z" : "zip";
             const romOnly = exportSettings.rom_only !== false;
+            const convertBO = exportSettings.convert_byteorder === true;
             callout.innerHTML =
                 '<span class="ra-callout-icon">&#10003;</span>' +
                 '<div class="ra-callout-body">' +
                 '<strong>Queued</strong>' +
                 'Destination: ' + esc(dest) + ' &nbsp;&bull;&nbsp; Format: ' + fmt +
                 (romOnly ? ' &nbsp;&bull;&nbsp; ROM only' : '') +
+                (convertBO ? ' &nbsp;&bull;&nbsp; Convert byte order' : '') +
                 '</div>';
             callout.style.borderLeftColor = "var(--pico-ins-color, #4caf50)";
             callout.style.background = "color-mix(in srgb, var(--pico-ins-color, #4caf50) 10%, var(--pico-card-background-color, transparent))";
@@ -992,8 +1000,12 @@ async function showRomAnalysis(row, activeTab = "data") {
         let steps = data.export_steps;
         const romOnly = exportSettings.rom_only !== false;
         const use7z = exportSettings.archive_format === "7z";
+        const convertBO = exportSettings.convert_byteorder === true;
         if (inQueue && !romOnly) {
             steps = steps.filter((s) => s.name !== "remove_embedded");
+        }
+        if (inQueue && !convertBO) {
+            steps = steps.filter((s) => s.name !== "convert_byteorder");
         }
 
         const sec = document.createElement("div");

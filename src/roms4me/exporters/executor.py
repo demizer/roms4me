@@ -10,7 +10,8 @@ from roms4me.exporters.base import ExportPlan
 
 def execute_export(rom_path: Path, plan: ExportPlan, dest_dir: Path,
                    archive_format: str = "zip",
-                   rom_only: bool = True) -> Path:
+                   rom_only: bool = True,
+                   convert_byteorder: bool = False) -> Path:
     """Apply an ExportPlan and write the result to dest_dir.
 
     archive_format: "zip" (default) or "7z".
@@ -37,6 +38,17 @@ def execute_export(rom_path: Path, plan: ExportPlan, dest_dir: Path,
             preferred_ext = Path(step.params.get("inner_name", "")).suffix.lower()
             break
 
+    # If byte-order conversion is enabled, override preferred_ext with the source
+    # format's extension so the correct ROM entry is extracted from the archive.
+    if convert_byteorder:
+        for step in plan.steps:
+            if step.name == "convert_byteorder":
+                from roms4me.exporters.fixers import _N64_FMT_TO_EXT
+                from_fmt = step.params.get("from_fmt", "")
+                if from_fmt in _N64_FMT_TO_EXT:
+                    preferred_ext = _N64_FMT_TO_EXT[from_fmt]
+                break
+
     rom_data = _read_rom_data(rom_path, preferred_ext)
     if rom_data is None:
         raise OSError(f"Could not read ROM data from {rom_path}")
@@ -44,13 +56,29 @@ def execute_export(rom_path: Path, plan: ExportPlan, dest_dir: Path,
     zip_name: str | None = None
     inner_name: str | None = None
 
+    converted_ext: str | None = None  # set by convert_byteorder step; updates inner_name
+
     for step in plan.steps:
         if step.name == "strip_header":
             header_size = step.params["header_size"]
             rom_data = rom_data[header_size:]
+        elif step.name == "convert_byteorder":
+            if convert_byteorder:
+                from roms4me.analyzers.n64_byteorder import to_bigendian
+                from_fmt = step.params.get("from_fmt", "bigendian")
+                to_fmt = step.params.get("to_fmt", "bigendian")
+                # Normalise to BigEndian, then apply the target encoding
+                # (to_bigendian is self-inverse for both swap operations)
+                be = to_bigendian(rom_data, from_fmt)
+                rom_data = to_bigendian(be, to_fmt)
+                converted_ext = step.params.get("new_ext", "")
         elif step.name == "compress_package":
             zip_name = step.params["zip_name"]
             inner_name = step.params["inner_name"]
+            # Update the inner filename extension when byte-order conversion ran
+            if converted_ext:
+                stem = Path(inner_name).stem
+                inner_name = stem + converted_ext
         # rename_ext handled implicitly: inner_name already carries the correct extension
         # remove_embedded handled implicitly when rom_only=True (clean archive from scratch)
 

@@ -33,6 +33,7 @@ class ExportSettings(BaseModel):
     one_game_one_rom: bool = True
     archive_format: str = "zip"  # "zip" | "7z"
     region_priority: str = "USA, World, Europe, Japan"
+    convert_byteorder: bool = False
 
 
 class AppConfig(BaseModel):

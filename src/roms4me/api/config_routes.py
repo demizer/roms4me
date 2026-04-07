@@ -70,6 +70,7 @@ async def put_export_settings_route(system_name: str, req: dict) -> dict:
         one_game_one_rom=bool(req.get("one_game_one_rom", True)),
         archive_format=archive_format,
         region_priority=req.get("region_priority", "USA, World, Europe, Japan"),
+        convert_byteorder=bool(req.get("convert_byteorder", False)),
     )
     set_export_settings(system_name, s)
     return s.model_dump()
