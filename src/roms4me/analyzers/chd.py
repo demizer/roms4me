@@ -60,6 +60,9 @@ _V5_VERSION = 5
 _CODEC_ZLIB = b"zlib"
 _CODEC_LZMA = b"lzma"
 
+# CD-specific codecs — require sector-aware decompression (not yet supported)
+_CD_CODECS = {b"cdlz", b"cdzl", b"cdfl"}
+
 # Map compression types
 _COMP_CODEC0    = 0
 _COMP_CODEC1    = 1
@@ -120,10 +123,10 @@ class _Huffman:
     """Canonical Huffman decoder — 9 symbols (compression types 0-8).
 
     The tree is serialised with MAME's import_tree_rle format:
-      3 bits: bits_per_length - 2  (so 2–9)
+      3 bits: bits_per_length - 1  (so 1–8)
       then for each symbol 0..8:
         if next <bits_per_length> bits != 0 → that is the code length
-        else → next 3 bits + 3 = run of zero-length symbols (range 3–10)
+        else → next 3 bits + 1 = run of zero-length symbols (range 1–8)
     """
 
     def __init__(self, num_symbols: int) -> None:
@@ -131,7 +134,7 @@ class _Huffman:
         self._table: dict[tuple[int, int], int] = {}
 
     def import_tree_rle(self, bits: _Bits) -> None:
-        bpl = bits.read(3) + 2          # bits per length value (range 2–9)
+        bpl = bits.read(3) + 1          # bits per length value (range 1–8)
         lengths: list[int] = []
         sym = 0
         while sym < self._nsyms:
@@ -140,7 +143,7 @@ class _Huffman:
                 lengths.append(val)
                 sym += 1
             else:
-                run = bits.read(3) + 3  # zero run (range 3–10)
+                run = bits.read(3) + 1  # zero run (range 1–8)
                 lengths.extend([0] * run)
                 sym += run
 
@@ -304,6 +307,16 @@ def crc32_of_chd(path: Path) -> str:
             raise ChdError(f"{path.name}: CHD version {version} not supported (need v5)")
 
         codecs = [hdr[16 + i*4 : 20 + i*4] for i in range(4)]
+
+        # Detect CD-specific codecs early — they require sector-aware decompression
+        active_codecs = [c for c in codecs if c != b"\x00\x00\x00\x00"]
+        cd_codecs = [c for c in active_codecs if c in _CD_CODECS]
+        if cd_codecs:
+            names = ", ".join(c.decode("ascii", errors="replace") for c in cd_codecs)
+            raise ChdError(
+                f"{path.name}: uses CD codec(s) {names} — "
+                f"sector-aware decompression not yet supported"
+            )
 
         logical_bytes = struct.unpack_from(">Q", hdr, 32)[0]
         map_offset    = struct.unpack_from(">Q", hdr, 40)[0]
