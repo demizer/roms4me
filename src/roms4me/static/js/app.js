@@ -247,7 +247,8 @@ async function selectSystem(systemName) {
         const exportBtn = document.getElementById("btn-add-queue");
         const deleteBtn = document.getElementById("btn-exclude");
         analyzeBtn.disabled = true;
-        exportBtn.disabled = true;
+        exportBtn.hidden = true;
+        exportBtn.disabled = false;
 
         // Wire up analyze button
         analyzeBtn.onclick = () => startAnalysis(systemName);
@@ -257,7 +258,12 @@ async function selectSystem(systemName) {
         };
         exportBtn.onclick = () => {
             const rows = gameGrid.getSelectedRows();
-            if (rows.length > 0) addToQueue(rows);
+            const analyzed = rows.filter((r) => r.status && r.status !== "unverified");
+            const skipped = rows.length - analyzed.length;
+            if (skipped > 0) {
+                setStatus(skipped + " item" + (skipped !== 1 ? "s" : "") + " skipped — analyze first");
+            }
+            if (analyzed.length > 0) addToQueue(analyzed);
         };
         deleteBtn.onclick = () => {
             const rows = gameGrid.getSelectedRows();
@@ -274,8 +280,10 @@ async function selectSystem(systemName) {
             analyzeBtn.disabled = n === 0;
             analyzeBtn.textContent = allAnalyzed ? "Re-analyze (" + n + ")" : n > 0 ? "Analyze (" + n + ")" : "Analyze";
             viewAnalysisBtn.hidden = !(allAnalyzed && n === 1);
-            exportBtn.disabled = n === 0;
-            exportBtn.textContent = n > 0 ? "Add to Queue (" + n + ")" : "Add to Queue";
+            const analyzedCount = selected.filter((r) => r.status && r.status !== "unverified").length;
+            exportBtn.hidden = analyzedCount === 0;
+            exportBtn.disabled = false;
+            exportBtn.textContent = "Add to Queue (" + analyzedCount + ")";
             deleteBtn.hidden = n === 0;
             deleteBtn.textContent = "Exclude (" + n + ")";
         };
