@@ -284,6 +284,28 @@ def _decompress(data: bytes, codec: bytes, expected: int) -> bytes:
 # Public API
 # ---------------------------------------------------------------------------
 
+def read_chd_sha1(path: Path) -> str:
+    """Read the raw-data SHA-1 from a CHD v5 header. No decompression needed.
+
+    Returns a 40-character lowercase hex string, or "" on error.
+    """
+    try:
+        with open(path, "rb") as f:
+            hdr = f.read(_V5_HEADER_SIZE)
+            if len(hdr) < _V5_HEADER_SIZE or hdr[:8] != _TAG:
+                return ""
+            version = struct.unpack_from(">I", hdr, 12)[0]
+            if version != _V5_VERSION:
+                return ""
+            # Raw SHA-1 is at offset 64 (20 bytes)
+            raw_sha1 = hdr[64:84]
+            if raw_sha1 == b"\x00" * 20:
+                return ""
+            return raw_sha1.hex()
+    except OSError:
+        return ""
+
+
 def crc32_of_chd(path: Path) -> str:
     """Return the CRC32 of the raw data stored in a CHD v5 file.
 
