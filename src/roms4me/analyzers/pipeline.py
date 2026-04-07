@@ -271,7 +271,7 @@ def _compute_crc(rom_path: Path, accepted_exts: set[str] | None = None) -> str:
             from roms4me.analyzers.chd import ChdError, crc32_of_chd
             try:
                 return crc32_of_chd(rom_path)
-            except ChdError as e:
+            except (ChdError, Exception) as e:
                 log.warning("CHD CRC failed for %s: %s", rom_path, e)
                 return ""
         else:

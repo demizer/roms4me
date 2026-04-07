@@ -240,6 +240,11 @@ def _decode_fixed(bits: _BitReader, block_size: int, bps: int, order: int) -> li
     # Residual
     residuals = _decode_residual(bits, block_size, order)
 
+    # Pad residuals if decoder returned too few (shouldn't happen, but safety)
+    expected = block_size - order
+    if len(residuals) < expected:
+        residuals.extend([0] * (expected - len(residuals)))
+
     # Reconstruct samples using fixed predictors
     samples = warmup + [0] * (block_size - order)
     for i in range(order, block_size):
@@ -274,6 +279,9 @@ def _decode_lpc(bits: _BitReader, block_size: int, bps: int, order: int) -> list
 
     # Residual
     residuals = _decode_residual(bits, block_size, order)
+    expected = block_size - order
+    if len(residuals) < expected:
+        residuals.extend([0] * (expected - len(residuals)))
 
     # Reconstruct
     samples = warmup + [0] * (block_size - order)
