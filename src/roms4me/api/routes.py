@@ -90,6 +90,18 @@ def _resolve_paths(session) -> tuple[list[_ResolvedPath], list[_ResolvedPath]]:
     return dat_resolved, rom_resolved
 
 
+def _match_dat_paths(system_name: str, all_dats: list, all_systems: dict) -> list:
+    """Return all DAT path entries whose system name matches system_name.
+
+    Uses match_all_systems so a single ROM directory (e.g. 'Sony - PS2') picks
+    up DATs from multiple source databases (Redump + Non-Redump).
+    """
+    from roms4me.services.system_matcher import match_all_systems
+    dat_system_names = list({all_systems.get(dp.system_id, "") for dp in all_dats})
+    matched = match_all_systems(system_name, dat_system_names)
+    return [dp for dp in all_dats if all_systems.get(dp.system_id) in matched]
+
+
 
 
 class PathOnly(BaseModel):
@@ -440,7 +452,6 @@ def _do_prescan(scan, system_name: str | None = None):
     If None, all systems are cleared and re-scanned.
     """
     from roms4me.services.prescan import prescan_system
-    from roms4me.services.system_matcher import match_system
 
     if system_name:
         scan.info(f"Syncing {system_name}...", color="blue")
@@ -500,18 +511,18 @@ def _do_prescan(scan, system_name: str | None = None):
 
             rom_system = systems.get(rp.system_id, rom_dir.name)
 
-            # Find matching DAT system using fuzzy matcher
-            matched_dat_system = match_system(rom_system, dat_system_names)
-
             scan.info(f"[{i + 1}/{total_rom_dirs}] {rom_system}", color="blue")
 
-            if not matched_dat_system:
+            # Find all matching DAT systems (may include Redump + Non-Redump etc.)
+            from roms4me.services.system_matcher import match_all_systems
+            matched_systems = match_all_systems(rom_system, dat_system_names)
+
+            if not matched_systems:
                 scan.info(f"  No matching DAT found")
                 checked += 1
                 continue
 
-            # Process each DAT that matches this ROM dir
-            matched_dats = dats_by_name[matched_dat_system]
+            matched_dats = [dp for name in matched_systems for dp in dats_by_name.get(name, [])]
             for dp in matched_dats:
                 p = Path(dp.path)
                 if not p.exists():
@@ -621,7 +632,6 @@ async def scan_system(system_name: str) -> dict:
 def _do_system_scan(scan, system_name: str):
     """Run CRC hash scan for a single system (called from background thread)."""
     from roms4me.handlers.registry import get_handler
-    from roms4me.services.system_matcher import match_system
 
     scan.info(f"Starting CRC scan for {system_name}...")
 
@@ -639,20 +649,17 @@ def _do_system_scan(scan, system_name: str):
             scan.finish("")
             return
 
-        # Find matching DATs using system matcher
         all_systems = {s.id: s.name for s in session.exec(select(System)).all()}
-        dat_system_names = list({all_systems.get(dp.system_id, "") for dp in all_dats})
-        matched_dat_system = match_system(system_name, dat_system_names)
+        dat_paths = _match_dat_paths(system_name, all_dats, all_systems)
 
-        if not matched_dat_system:
+        if not dat_paths:
             scan.info("No matching DAT files found for this system")
             scan.finish("")
             return
 
-        dat_paths = [dp for dp in all_dats if all_systems.get(dp.system_id) == matched_dat_system]
         rom_dirs = [Path(rp.path) for rp in rom_paths]
 
-        scan.info(f"  Matched DAT system: {matched_dat_system} ({len(dat_paths)} DAT file(s))")
+        scan.info(f"  {len(dat_paths)} matching DAT file(s)")
 
         # Clear old scan results for this system
         old = session.exec(select(ScanResult).where(ScanResult.system_id == system.id)).all()
@@ -804,7 +811,6 @@ def _do_analyze(scan, system_name: str, files: list[str]):
     """Run analysis on selected ROMs (called from background thread)."""
     from roms4me.analyzers.pipeline import analyze_rom
     from roms4me.exporters.planner import plan_export
-    from roms4me.services.system_matcher import match_system
 
     scan.info(f"Analyzing {len(files)} ROM(s)...", color="blue")
 
@@ -818,21 +824,19 @@ def _do_analyze(scan, system_name: str, files: list[str]):
         all_dats, all_roms = _resolve_paths(session)
         rom_dirs = [Path(rp.path) for rp in all_roms if rp.system_id == system.id]
 
-        # Find matching DATs
         all_systems = {s.id: s.name for s in session.exec(select(System)).all()}
-        dat_system_names = list({all_systems.get(dp.system_id, "") for dp in all_dats})
-        matched_dat_system = match_system(system_name, dat_system_names)
+        dat_path_entries = _match_dat_paths(system_name, all_dats, all_systems)
 
-        if not matched_dat_system:
+        if not dat_path_entries:
             scan.info("No matching DAT found", color="red")
             scan.finish("")
             return
 
-        dat_path_entries = [dp for dp in all_dats if all_systems.get(dp.system_id) == matched_dat_system]
         dats = [parse_dat_file(Path(dp.path)) for dp in dat_path_entries if Path(dp.path).exists()]
 
         total_dat_games = sum(len(d.games) for d in dats)
-        scan.info(f"DAT: {matched_dat_system} ({total_dat_games} games loaded)", color="blue")
+        dat_labels = ", ".join(sorted({all_systems.get(dp.system_id, "") for dp in dat_path_entries}))
+        scan.info(f"DAT: {dat_labels} ({total_dat_games} games loaded)", color="blue")
         if not dats:
             scan.info("  No DAT files could be loaded — check DAT paths in Settings", color="red")
             scan.finish("")
@@ -1093,26 +1097,19 @@ def _do_analyze(scan, system_name: str, files: list[str]):
 @router.get("/matched-dats/{system_name}")
 async def get_matched_dats(system_name: str) -> list[dict]:
     """Get DAT files that match a ROM system name."""
-    from roms4me.services.system_matcher import match_system
-
     with get_session() as session:
         all_dats, _ = _resolve_paths(session)
         all_systems = {s.id: s.name for s in session.exec(select(System)).all()}
-        dat_system_names = list({all_systems.get(dp.system_id, "") for dp in all_dats})
-        matched = match_system(system_name, dat_system_names)
+        matched_paths = _match_dat_paths(system_name, all_dats, all_systems)
 
-        if not matched:
-            return []
-
-        results = []
-        for dp in all_dats:
-            if all_systems.get(dp.system_id) == matched:
-                results.append({
-                    "system": matched,
-                    "path": dp.path,
-                    "filename": Path(dp.path).name,
-                })
-        return results
+        return [
+            {
+                "system": all_systems.get(dp.system_id, ""),
+                "path": dp.path,
+                "filename": Path(dp.path).name,
+            }
+            for dp in matched_paths
+        ]
 
 
 @router.patch("/results/{system_name}")
@@ -1245,7 +1242,6 @@ def _do_export(scan, system_name: str, files: list[str], dest_dir: Path,
     from roms4me.analyzers.base import Suggestion
     from roms4me.exporters.executor import execute_export
     from roms4me.exporters.planner import plan_export
-    from roms4me.services.system_matcher import match_system
 
     region_priority = region_priority or []
     scan.info(f"Exporting {len(files)} ROM(s) to {dest_dir}...", color="blue")
@@ -1261,15 +1257,13 @@ def _do_export(scan, system_name: str, files: list[str], dest_dir: Path,
         rom_dirs = [Path(rp.path) for rp in all_roms if rp.system_id == system.id]
 
         all_systems = {s.id: s.name for s in session.exec(select(System)).all()}
-        dat_system_names = list({all_systems.get(dp.system_id, "") for dp in all_dats})
-        matched_dat_system = match_system(system_name, dat_system_names)
+        dat_path_entries = _match_dat_paths(system_name, all_dats, all_systems)
 
-        if not matched_dat_system:
+        if not dat_path_entries:
             scan.info("No matching DAT found", color="red")
             scan.finish("")
             return
 
-        dat_path_entries = [dp for dp in all_dats if all_systems.get(dp.system_id) == matched_dat_system]
         dats = [parse_dat_file(Path(dp.path)) for dp in dat_path_entries if Path(dp.path).exists()]
 
         # Build region-priority auto-exclude set before the main loop
@@ -1524,14 +1518,11 @@ async def rom_details(system_name: str, file: str) -> dict:
             from roms4me.analyzers.base import Suggestion as _Suggestion
             from roms4me.exporters.planner import plan_export as _plan_export
             from roms4me.services.dat_parser import parse_dat_file
-            from roms4me.services.system_matcher import match_system
 
             all_dats, _ = _resolve_paths(session)
             all_systems_map = {s.id: s.name for s in session.exec(select(System)).all()}
-            dat_system_names = list({all_systems_map.get(dp.system_id, "") for dp in all_dats})
-            matched_dat_system = match_system(system_name, dat_system_names)
-            if matched_dat_system:
-                dat_entries = [dp for dp in all_dats if all_systems_map.get(dp.system_id) == matched_dat_system]
+            dat_entries = _match_dat_paths(system_name, all_dats, all_systems_map)
+            if dat_entries:
                 for dp in dat_entries:
                     dat_path = Path(dp.path)
                     if not dat_path.exists():

@@ -192,6 +192,8 @@ async function selectSystem(systemName) {
         li.classList.toggle("active", li.dataset.system === systemName);
     });
 
+    document.getElementById("btn-sync").textContent = "Sync System";
+
     setStatus("Loading " + systemName + "...");
 
     try {
@@ -1182,6 +1184,7 @@ function updateStatusSummary(results) {
 
 document.getElementById("btn-sync").addEventListener("click", () => {
     const fetchOpts = currentSystem ? {
+        method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ system_name: currentSystem }),
     } : {};
@@ -1539,6 +1542,7 @@ document.getElementById("btn-home").addEventListener("click", (e) => {
     e.preventDefault();
     currentSystem = null;
     document.querySelectorAll("#system-tree li").forEach((li) => li.classList.remove("active"));
+    document.getElementById("btn-sync").textContent = "Sync";
     showView("welcome");
     loadWelcome();
 });

@@ -5,31 +5,55 @@ import re
 # Common abbreviations and aliases: canonical -> set of variants (all lowercase)
 _ALIASES: dict[str, set[str]] = {
     "nes": {"nintendo entertainment system", "famicom", "nes"},
-    "snes": {"super nintendo entertainment system", "super famicom", "snes", "super nes"},
+    "snes": {"super nintendo entertainment system", "super famicom", "snes", "sfc", "super nes"},
     "n64": {"nintendo 64", "n64"},
+    "gamecube": {"gamecube", "gcn", "ngc", "nintendo gamecube"},
+    "wii": {"wii"},
+    "wii u": {"wii u", "wiiu"},
+    "switch": {"nintendo switch", "switch", "ns"},
     "3ds": {"nintendo 3ds", "3ds"},
     "ds": {"nintendo ds", "nds", "ds"},
     "gba": {"game boy advance", "gba"},
     "gbc": {"game boy color", "gbc"},
     "gb": {"game boy", "gb"},
-    "genesis": {"mega drive", "genesis", "mega drive - genesis"},
+    "genesis": {"mega drive", "genesis", "mega drive - genesis", "md", "gen"},
+    "sega cd": {"sega cd", "mega cd", "scd", "megacd"},
+    "32x": {"sega 32x", "32x"},
+    "saturn": {"saturn", "sega saturn", "sat"},
+    "dreamcast": {"dreamcast", "dc"},
+    "gg": {"game gear", "gg"},
+    "sms": {"master system", "sms"},
     "ps1": {"playstation", "ps1", "psx", "ps one", "ps one classics"},
     "ps2": {"playstation 2", "ps2"},
-    "psp": {"playstation portable", "psp"},
     "ps3": {"playstation 3", "ps3"},
-    "pce": {"pc engine", "turbografx-16", "turbografx 16", "pce"},
-    "neo geo pocket": {"neogeo pocket", "neo geo pocket", "ngp"},
+    "ps4": {"playstation 4", "ps4"},
+    "ps5": {"playstation 5", "ps5"},
+    "psp": {"playstation portable", "psp"},
+    "vita": {"playstation vita", "vita", "psv", "ps vita"},
+    "xbox": {"xbox", "microsoft xbox"},
+    "xbox 360": {"xbox 360", "x360"},
+    "xbox one": {"xbox one", "xone"},
+    "xbox series": {"xbox series x", "xbox series s", "xbox series x/s", "xsx", "xss", "xs"},
+    "pce": {"pc engine", "turbografx-16", "turbografx 16", "tg16", "pce"},
+    "neo geo aes": {"neo geo aes", "neo-geo aes", "aes", "neoaes"},
+    "neo geo cd": {"neo geo cd", "neo-geo cd", "neocd"},
+    "neo geo pocket": {"neogeo pocket", "neo geo pocket", "ngp", "ngpc", "neo geo pocket color"},
     "neo geo": {"neogeo", "neo geo", "neo-geo"},
-    "sms": {"master system", "sms"},
-    "gg": {"game gear", "gg"},
-    "2600": {"atari 2600", "2600"},
-    "c64": {"commodore 64", "c64"},
+    "atari 2600": {"atari 2600", "2600", "a2600", "vcs"},
+    "atari 5200": {"atari 5200", "5200", "a5200"},
+    "atari 7800": {"atari 7800", "7800", "a7800"},
+    "atari jaguar": {"atari jaguar", "jaguar", "jag"},
+    "atari lynx": {"atari lynx", "lynx"},
+    "intellivision": {"intellivision", "intv"},
+    "colecovision": {"colecovision", "coleco", "col"},
+    "odyssey2": {"odyssey 2", "odyssey²", "videopac", "ody2", "o2", "vp"},
+    "c64": {"commodore 64", "c64", "64"},
     "msx2+": {"msx2+", "msx2 plus"},
-    "dreamcast": {"dreamcast", "dc"},
-    "saturn": {"saturn", "sega saturn"},
-    "sega cd": {"sega cd", "mega cd"},
     "wsc": {"wonderswan color", "wsc"},
 }
+
+# DAT name prefixes that indicate source/type rather than manufacturer
+_STRIP_PREFIXES = {"non-redump", "redump", "tosec", "nointro", "no-intro", "mame"}
 
 
 def match_system(dat_system: str, rom_dirs: list[str]) -> str | None:
@@ -42,6 +66,19 @@ def match_system(dat_system: str, rom_dirs: list[str]) -> str | None:
     if scores and scores[0][1] > 0:
         return scores[0][0]
     return None
+
+
+def match_all_systems(query: str, candidates: list[str], threshold: float = 1.0) -> list[str]:
+    """Return all candidate names that match query above threshold score.
+
+    Used when a single ROM system may have multiple matching DAT system names
+    (e.g. both 'Sony - PlayStation 2' and 'Non-Redump - Sony - PlayStation 2').
+    Results are sorted best-match first.
+    """
+    scores = [(c, _score(query, c)) for c in candidates]
+    matched = [(c, s) for c, s in scores if s >= threshold]
+    matched.sort(key=lambda x: x[1], reverse=True)
+    return [c for c, _ in matched]
 
 
 def match_all(dat_systems: list[str], rom_dirs: list[str]) -> dict[str, str | None]:
@@ -59,6 +96,11 @@ def _score(dat_system: str, rom_dir: str) -> float:
 
     # Manufacturer must match (if both have one)
     if dat_mfr and rom_mfr and dat_mfr != rom_mfr:
+        # Either side may carry a source prefix like "Non-Redump" — strip and retry
+        if dat_mfr in _STRIP_PREFIXES and " - " in dat_sys:
+            return _score(dat_sys, rom_dir)
+        if rom_mfr in _STRIP_PREFIXES and " - " in rom_sys:
+            return _score(dat_system, rom_sys)
         return 0.0
 
     # Strip parenthesized metadata from both

@@ -36,7 +36,7 @@ ROM_EXTENSIONS: dict[str, list[str]] = {
     "Saturn": [".bin", ".iso", ".img", ".chd", ".cue"],
     "Dreamcast": [".bin", ".iso", ".chd", ".cdi", ".gdi"],
     "PlayStation": [".bin", ".iso", ".img", ".chd", ".cue"],
-    "PlayStation 2": [".iso", ".bin", ".chd"],
+    "PlayStation 2": [".iso", ".chd", ".bin", ".cue", ".cso", ".zso", ".gz"],
     "PlayStation Portable": [".iso", ".cso", ".chd"],
     "PC Engine": [".pce", ".bin"],
     "TurboGrafx": [".pce", ".bin"],

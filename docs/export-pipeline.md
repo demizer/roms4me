@@ -93,11 +93,4 @@ No changes to `planner.py` or `routes.py` are needed.
 
 ## Analysis pipeline
 
-The analysis pipeline follows the same pattern. Analyzers are split into two ordered lists in `src/roms4me/analyzers/pipeline.py`:
-
-| List | Analyzers | When they run |
-|---|---|---|
-| `FILE_ANALYZERS` | `CrcLookupAnalyzer`, `HeaderStripAnalyzer`, `N64ByteOrderAnalyzer` | First — require reading file data |
-| `NAME_ANALYZERS` | `RegionMapAnalyzer`, `NameContainsAnalyzer` | After — filename only, generate candidates for CRC verification |
-
-To add a new analyzer: implement the `Analyzer` protocol from `analyzers/base.py` and append an instance to either list in `pipeline.py`.
+See [Analysis Pipeline](analysis-pipeline.md) for the full reference. The analysis pipeline uses the same declarative, registry-based pattern as the export pipeline — base analyzers run for every system; system-specific analyzers are declared in `SYSTEM_FILE_ANALYZERS` keyed by DAT name substring.

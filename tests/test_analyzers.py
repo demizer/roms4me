@@ -137,12 +137,12 @@ def test_analyzer_exception_populates_errors(tmp_path):
         {"name": "bad", "analyze_file": lambda self, p, d: (_ for _ in ()).throw(RuntimeError("disk on fire"))},
     )()
 
-    original = pl.FILE_ANALYZERS
-    pl.FILE_ANALYZERS = [bad_analyzer]
+    original = pl.BASE_FILE_ANALYZERS
+    pl.BASE_FILE_ANALYZERS = [bad_analyzer]
     try:
         result = analyze_rom(rom, dat, verify_crc=False)
     finally:
-        pl.FILE_ANALYZERS = original
+        pl.BASE_FILE_ANALYZERS = original
 
     assert any("bad" in e for e in result.errors)
     assert any("disk on fire" in e for e in result.errors)
@@ -163,12 +163,12 @@ def test_analyzer_exception_does_not_crash_pipeline(tmp_path):
         {"name": "bad", "analyze_file": lambda self, p, d: (_ for _ in ()).throw(RuntimeError("oops"))},
     )()
 
-    original = pl.FILE_ANALYZERS
-    pl.FILE_ANALYZERS = [bad_analyzer]
+    original = pl.BASE_FILE_ANALYZERS
+    pl.BASE_FILE_ANALYZERS = [bad_analyzer]
     try:
         result = analyze_rom(rom, dat, verify_crc=False)
     finally:
-        pl.FILE_ANALYZERS = original
+        pl.BASE_FILE_ANALYZERS = original
 
     # Pipeline should still produce name-based suggestions
     assert len(result.suggestions) > 0

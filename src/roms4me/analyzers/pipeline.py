@@ -3,6 +3,11 @@
 Analyzer types:
 - Name-based: analyze(rom_stem, dat) → suggestions from filename alone
 - File-based: analyze_file(rom_path, dat) → suggestions that need file access (headers, CRC)
+
+The pipeline is declarative: BASE_FILE_ANALYZERS run for every system; SYSTEM_FILE_ANALYZERS
+adds per-system analyzers resolved by substring match on the DAT name (same convention as
+ROM_EXTENSIONS in handlers/registry.py).  Add entries to SYSTEM_FILE_ANALYZERS — no changes
+to analyze_rom() needed.
 """
 
 import logging
@@ -21,18 +26,33 @@ from roms4me.models.dat import DatFile
 
 log = logging.getLogger(__name__)
 
-# Name-based analyzers — fast, work on filename only
+# Name-based analyzers — run for every system, filename only
 NAME_ANALYZERS = [
     RegionMapAnalyzer(),
     NameContainsAnalyzer(),
 ]
 
-# File-based analyzers — need to read ROM data
-FILE_ANALYZERS = [
+# File-based analyzers that run for every system
+BASE_FILE_ANALYZERS = [
     CrcLookupAnalyzer(),
     HeaderStripAnalyzer(),
-    N64ByteOrderAnalyzer(),
 ]
+
+# Per-system file-based analyzers — keys are substrings matched case-insensitively
+# against the DAT name.  All matching lists are merged and appended after BASE_FILE_ANALYZERS.
+SYSTEM_FILE_ANALYZERS: dict[str, list] = {
+    "Nintendo 64": [N64ByteOrderAnalyzer()],
+}
+
+
+def _get_file_analyzers(dat_name: str) -> list:
+    """Return BASE_FILE_ANALYZERS + any SYSTEM_FILE_ANALYZERS that match dat_name."""
+    extra = []
+    lower = dat_name.lower()
+    for key, analyzers in SYSTEM_FILE_ANALYZERS.items():
+        if key.lower() in lower:
+            extra.extend(analyzers)
+    return BASE_FILE_ANALYZERS + extra
 
 
 def analyze_rom(
@@ -82,7 +102,7 @@ def analyze_rom(
             pass
 
     # 1. File-based analyzers first — they can confirm matches directly
-    for analyzer in FILE_ANALYZERS:
+    for analyzer in _get_file_analyzers(dat.name):
         try:
             suggestions = analyzer.analyze_file(rom_path, dat)
             for s in suggestions:
@@ -117,7 +137,7 @@ def analyze_rom(
 
     # 3. CRC verify name-based candidates (try raw CRC, then header-stripped)
     actual_crc = _compute_crc(rom_path, accepted_exts)
-    stripped_crcs = _compute_stripped_crcs(rom_path, accepted_exts)
+    stripped_crcs = _compute_stripped_crcs(rom_path, accepted_exts, dat.name)
     if not actual_crc:
         return result
 
@@ -146,7 +166,7 @@ def analyze_rom(
     return result
 
 
-def _compute_stripped_crcs(rom_path: Path, accepted_exts: set[str] | None = None) -> dict[str, str]:
+def _compute_stripped_crcs(rom_path: Path, accepted_exts: set[str] | None = None, dat_name: str = "") -> dict[str, str]:
     """Compute CRC32 for header-stripped and byte-order-normalized variants.
 
     Returns {crc_hex: description} for each variant tried.
@@ -172,10 +192,8 @@ def _compute_stripped_crcs(rom_path: Path, accepted_exts: set[str] | None = None
         stripped_crc = f"{zlib.crc32(rom_data[header_size:]) & 0xFFFFFFFF:08x}"
         result[stripped_crc] = header_desc
 
-    # N64 byte-order normalization — try all interpretations for detected N64 ROMs.
-    # This mirrors N64ByteOrderAnalyzer and handles mismatches between magic bytes
-    # and file extension (e.g. a BigEndian-magic ROM stored with a .v64 extension).
-    fmt = detect_n64_format(rom_data)
+    # N64 byte-order normalization — only for Nintendo 64 DATs.
+    fmt = detect_n64_format(rom_data) if "nintendo 64" in dat_name.lower() else None
     if fmt:
         raw_crc = f"{zlib.crc32(rom_data) & 0xFFFFFFFF:08x}"
         for try_fmt in ("byteswapped", "littleendian"):
@@ -208,9 +226,19 @@ def _compute_crc(rom_path: Path, accepted_exts: set[str] | None = None) -> str:
                 if candidates:
                     best = max(candidates, key=lambda e: e.file_size)
                     return f"{best.CRC & 0xFFFFFFFF:08x}"
+        elif rom_path.suffix.lower() == ".chd":
+            from roms4me.analyzers.chd import ChdError, crc32_of_chd
+            try:
+                return crc32_of_chd(rom_path)
+            except ChdError as e:
+                log.warning("CHD CRC failed for %s: %s", rom_path, e)
+                return ""
         else:
-            data = rom_path.read_bytes()
-            return f"{zlib.crc32(data) & 0xFFFFFFFF:08x}"
-    except (zipfile.BadZipFile, OSError) as e:
+            crc = 0
+            with open(rom_path, "rb") as f:
+                while chunk := f.read(8 * 1024 * 1024):
+                    crc = zlib.crc32(chunk, crc)
+            return f"{crc & 0xFFFFFFFF:08x}"
+    except OSError as e:
         log.warning("Could not compute CRC for %s: %s", rom_path, e)
     return ""
