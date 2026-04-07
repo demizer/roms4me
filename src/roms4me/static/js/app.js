@@ -192,9 +192,6 @@ async function selectSystem(systemName) {
         li.classList.toggle("active", li.dataset.system === systemName);
     });
 
-    // Show the game list view immediately so the user sees something
-    document.getElementById("game-list-title").textContent = systemName;
-    showView("game-list");
     setStatus("Loading " + systemName + "...");
 
     try {
@@ -208,17 +205,29 @@ async function selectSystem(systemName) {
         ]);
         const prescan = prescanResults.find((p) => p.system === systemName);
 
+        // No DAT — show a helpful message instead of an empty grid
+        if (matchedDats.length === 0) {
+            document.getElementById("welcome-content").innerHTML =
+                "<h4>" + esc(systemName) + "</h4>" +
+                "<p>No DAT file found for this system.</p>" +
+                "<p>Add a DAT directory in Settings that contains a DAT for <strong>" + esc(systemName) + "</strong>, then run Sync.</p>" +
+                '<button id="no-dat-settings" class="outline">Open Settings</button>';
+            document.getElementById("no-dat-settings").addEventListener("click", () => {
+                document.getElementById("btn-settings").click();
+            });
+            showView("welcome");
+            setStatus("");
+            return;
+        }
+
         // Header: title
         document.getElementById("game-list-title").textContent = systemName;
+        showView("game-list");
 
         // Header: meta info
         const meta = document.getElementById("game-list-meta");
         let metaHtml = "";
-        if (matchedDats.length > 0) {
-            metaHtml += "DAT: " + matchedDats.map((d) => esc(d.filename)).join(", ");
-        } else {
-            metaHtml += "<em>No matching DAT</em>";
-        }
+        metaHtml += "DAT: " + matchedDats.map((d) => esc(d.filename)).join(", ");
         if (prescan) {
             metaHtml += " | " + prescan.rom_file_count + " ROM files";
             metaHtml += " | " + prescan.dat_game_count + " in DAT";
@@ -1381,6 +1390,7 @@ document.getElementById("btn-add-dat-path").addEventListener("click", () => {
     addpathMode = "dat";
     document.getElementById("addpath-title").textContent = "Add DAT Path";
     document.getElementById("addpath-form").reset();
+    document.getElementById("addpath-error").hidden = true;
     Modal.open("addpath-modal");
 });
 
@@ -1388,7 +1398,12 @@ document.getElementById("btn-add-rom-path").addEventListener("click", () => {
     addpathMode = "rom";
     document.getElementById("addpath-title").textContent = "Add ROM Path";
     document.getElementById("addpath-form").reset();
+    document.getElementById("addpath-error").hidden = true;
     Modal.open("addpath-modal");
+});
+
+document.getElementById("addpath-path").addEventListener("input", () => {
+    document.getElementById("addpath-error").hidden = true;
 });
 
 document.getElementById("addpath-form").addEventListener("submit", async (e) => {
@@ -1410,7 +1425,10 @@ document.getElementById("addpath-form").addEventListener("submit", async (e) => 
                 Modal.open("confirm-sync-modal");
             }
         } catch (err) {
-            setStatus("Error: " + err.message);
+            const errEl = document.getElementById("addpath-error");
+            errEl.textContent = err.message;
+            errEl.hidden = false;
+            setStatus("");
         }
     } else {
         try {
@@ -1425,7 +1443,10 @@ document.getElementById("addpath-form").addEventListener("submit", async (e) => 
             await loadSystems();
             setStatus("Added " + added.length + " ROM path(s)");
         } catch (err) {
-            setStatus("Error: " + err.message);
+            const errEl = document.getElementById("addpath-error");
+            errEl.textContent = err.message;
+            errEl.hidden = false;
+            setStatus("");
         }
     }
 });

@@ -32,6 +32,14 @@ Open http://127.0.0.1:8000 in your browser.
 4. Select a system in the sidebar to view results
 5. Select ROMs and click **Analyze** for CRC verification
 
+## ROM Collection Status
+
+| System | Status |
+|--------|--------|
+| Nintendo - SNES | Working |
+| Nintendo - N64 | Working |
+| All others | WIP — no roadmap |
+
 ## ROM Directory Naming
 
 See the [ROM Directory Format](docs/rom-directory-format.md) documentation for details and the full system name mapping.

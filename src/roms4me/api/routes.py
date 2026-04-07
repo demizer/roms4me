@@ -155,6 +155,8 @@ async def list_dat_paths() -> list[dict]:
 async def add_dat_path(req: DatPathRequest) -> list[dict]:
     """Add a DAT directory path. Auto-detects systems from DAT file headers."""
     p = Path(req.path).expanduser().resolve()
+    if p.is_file():
+        raise HTTPException(status_code=400, detail="That's a file path — enter the containing directory instead")
     if not p.is_dir():
         raise HTTPException(status_code=400, detail="Directory does not exist")
 
