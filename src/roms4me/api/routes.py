@@ -156,11 +156,18 @@ async def add_dat_path(req: DatPathRequest) -> list[dict]:
     """Add a DAT directory path. Auto-detects systems from DAT file headers."""
     p = Path(req.path).expanduser().resolve()
     if p.is_file():
-        raise HTTPException(status_code=400, detail="That's a file path — enter the containing directory instead")
-    if not p.is_dir():
-        raise HTTPException(status_code=400, detail="Directory does not exist")
-
-    discovered = scan_dat_dir(p)
+        if p.suffix.lower() not in (".dat", ".zip"):
+            raise HTTPException(status_code=400, detail="File must be a .dat or .zip DAT file")
+        try:
+            from roms4me.services.dat_parser import detect_system
+            system = detect_system(p)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Could not read DAT file: {e}")
+        discovered = [{"file": p.name, "path": str(p), "system": system}]
+    elif not p.is_dir():
+        raise HTTPException(status_code=400, detail="Path does not exist")
+    else:
+        discovered = scan_dat_dir(p)
     if not discovered:
         raise HTTPException(status_code=400, detail="No DAT files found in directory")
 
