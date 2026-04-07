@@ -120,10 +120,10 @@ class _Huffman:
     """Canonical Huffman decoder — 9 symbols (compression types 0-8).
 
     The tree is serialised with MAME's import_tree_rle format:
-      3 bits: bits_per_length - 1  (so 1–8)
+      3 bits: bits_per_length - 2  (so 2–9)
       then for each symbol 0..8:
         if next <bits_per_length> bits != 0 → that is the code length
-        else → next 3 bits + 1 = run of zero-length symbols
+        else → next 3 bits + 3 = run of zero-length symbols (range 3–10)
     """
 
     def __init__(self, num_symbols: int) -> None:
@@ -131,7 +131,7 @@ class _Huffman:
         self._table: dict[tuple[int, int], int] = {}
 
     def import_tree_rle(self, bits: _Bits) -> None:
-        bpl = bits.read(3) + 1          # bits per length value
+        bpl = bits.read(3) + 2          # bits per length value (range 2–9)
         lengths: list[int] = []
         sym = 0
         while sym < self._nsyms:
@@ -140,7 +140,7 @@ class _Huffman:
                 lengths.append(val)
                 sym += 1
             else:
-                run = bits.read(3) + 1  # zero run
+                run = bits.read(3) + 3  # zero run (range 3–10)
                 lengths.extend([0] * run)
                 sym += run
 

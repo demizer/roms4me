@@ -909,9 +909,9 @@ def _do_analyze(scan, system_name: str, files: list[str]):
                     scan.info(f"  ? {s.dat_game_name}")
                     scan.info(f"        {s.reason}")
 
-            # If all suggestions are CRC mismatches, show diagnostic with all N64 conversion attempts
+            # If all suggestions are CRC mismatches, show N64 byte-order diagnostic (N64 only)
             all_mismatch = unique_suggestions and all(s.crc_match is False for s in unique_suggestions)
-            if all_mismatch:
+            if all_mismatch and "nintendo 64" in system_name.lower():
                 from roms4me.analyzers.n64_byteorder import (
                     _FORMAT_LABEL,
                     _read_rom_data as _n64_read,
