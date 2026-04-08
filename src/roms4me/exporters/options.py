@@ -7,6 +7,9 @@ matching the same convention as ``SYSTEM_FIXERS`` in ``fixers.py`` and
 
 To add a new option for a system, append an entry here — the UI, API, config
 persistence, and executor all pick it up automatically.
+
+The ``compress_7z`` option is added automatically for any system whose fixer
+pipeline includes ``ZipPackageFixer`` (i.e. cartridge-based systems).
 """
 
 from __future__ import annotations
@@ -28,62 +31,46 @@ class ExportOption:
     """Default value when the user has never toggled this option."""
 
 
+_COMPRESS_7Z_OPTION = ExportOption(
+    id="compress_7z",
+    label="Compress with 7z (smaller files, same ROM data)",
+)
+
 # ── Registry ────────────────────────────────────────────────────────────────
 # Keyed by system-name substring (case-insensitive match).
+# Only system-specific options go here; compress_7z is added automatically
+# for systems whose fixer pipeline includes ZipPackageFixer.
+
+_n64_options = [
+    ExportOption(
+        id="convert_byteorder",
+        label="Convert ROM to DAT format (e.g. .v64 → .z64)",
+    ),
+]
 
 SYSTEM_EXPORT_OPTIONS: dict[str, list[ExportOption]] = {
-    "Nintendo 64": [
-        ExportOption(
-            id="convert_byteorder",
-            label="Convert ROM to DAT format (e.g. .v64 → .z64)",
-        ),
-    ],
-    "PlayStation 2": [
-        ExportOption(
-            id="extract_disc_image",
-            label="Extract disc images from archives (ISO, CHD, etc.)",
-        ),
-    ],
-    "PlayStation Portable": [
-        ExportOption(
-            id="extract_disc_image",
-            label="Extract disc images from archives (ISO, CSO, etc.)",
-        ),
-    ],
-    "Dreamcast": [
-        ExportOption(
-            id="extract_disc_image",
-            label="Extract disc images from archives (CHD, GDI, etc.)",
-        ),
-    ],
-    "Saturn": [
-        ExportOption(
-            id="extract_disc_image",
-            label="Extract disc images from archives (CHD, BIN, etc.)",
-        ),
-    ],
-    "Sega CD": [
-        ExportOption(
-            id="extract_disc_image",
-            label="Extract disc images from archives (CHD, BIN, etc.)",
-        ),
-    ],
-    "PlayStation": [
-        ExportOption(
-            id="extract_disc_image",
-            label="Extract disc images from archives (CHD, BIN, etc.)",
-        ),
-    ],
+    "Nintendo 64": _n64_options,
+    "N64": _n64_options,
 }
 
 
 def get_system_export_options(system_name: str) -> list[ExportOption]:
-    """Return the extra export options available for *system_name*.
+    """Return the export options available for *system_name*.
 
-    Uses case-insensitive substring matching, merging all matching entries.
+    Automatically prepends ``compress_7z`` for systems whose fixer pipeline
+    supports archiving.  Then appends any system-specific options from the
+    registry using case-insensitive substring matching.
     """
+    from roms4me.exporters.fixers import system_supports_archiving
+
     result: list[ExportOption] = []
     seen: set[str] = set()
+
+    # Auto-add compress_7z for systems that produce archives
+    if system_supports_archiving(system_name):
+        result.append(_COMPRESS_7Z_OPTION)
+        seen.add(_COMPRESS_7Z_OPTION.id)
+
     lower = system_name.lower()
     for key, options in SYSTEM_EXPORT_OPTIONS.items():
         if key.lower() in lower:

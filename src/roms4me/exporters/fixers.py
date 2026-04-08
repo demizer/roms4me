@@ -59,6 +59,39 @@ def _inner_ext_from_zip(
     return ""
 
 
+def _inner_ext_from_7z(
+    rom_file: Path,
+    accepted_exts: set[str] | None = None,
+) -> str:
+    """Return the extension of the primary ROM entry inside a 7z archive."""
+    try:
+        import py7zr
+        with py7zr.SevenZipFile(rom_file, "r") as szf:
+            entries = [e for e in szf.list() if not e.is_directory]
+            if accepted_exts:
+                candidates = [e for e in entries if Path(e.filename).suffix.lower() in accepted_exts]
+                if not candidates:
+                    candidates = entries
+            else:
+                candidates = entries
+            if candidates:
+                best = max(candidates, key=lambda e: e.uncompressed or 0)
+                return Path(best.filename).suffix.lower()
+    except Exception:
+        pass
+    return ""
+
+
+def _source_rom_ext(rom_file: Path, accepted_exts: set[str] | None = None) -> str:
+    """Return the ROM extension from the source file (looking inside archives)."""
+    suffix = rom_file.suffix.lower()
+    if suffix == ".zip":
+        return _inner_ext_from_zip(rom_file, accepted_exts) or ""
+    if suffix == ".7z":
+        return _inner_ext_from_7z(rom_file, accepted_exts) or ""
+    return suffix
+
+
 class HeaderStripFixer:
     """Suggests stripping copier headers when detected."""
 
@@ -204,13 +237,33 @@ class ZipPackageFixer:
         )]
 
 
-# All fixers in pipeline order — run for every system
-ALL_FIXERS = [
-    HeaderStripFixer(),
-    RenameExtFixer(),
-    RemoveEmbeddedFixer(),
-    ZipPackageFixer(),
-]
+class LooseFileFixer:
+    """Declares that the ROM should be exported as a loose file (no archiving).
+
+    This is the disc-system counterpart to ZipPackageFixer — it explicitly
+    sets the output filename to the DAT-correct ROM name, and the executor
+    extracts the ROM from any source archive automatically.
+    """
+
+    name = "loose_file"
+
+    def suggest(self, rom_file: Path, rom_data: bytes, dat_game_name: str,
+                dat_rom_name: str, dat_rom_ext: str,
+                accepted_exts: set[str] | None = None) -> list[ExportStep]:
+        """Declare the loose output filename.
+
+        Always preserves the source ROM's actual extension — the DAT may list
+        a different format (e.g. .bin) than what the user has (.chd, .iso),
+        and we don't do format conversion.
+        """
+        ext = _source_rom_ext(rom_file, accepted_exts) or dat_rom_ext
+        target_name = f"{dat_game_name}{ext}"
+        return [ExportStep(
+            name="loose_file",
+            description=f"Export as: {target_name}",
+            params={"target_name": target_name},
+        )]
+
 
 class N64ByteOrderFixer:
     """Suggests a byte-order conversion step when the ROM format differs from the DAT.
@@ -260,25 +313,65 @@ class N64ByteOrderFixer:
         )]
 
 
-# System-specific fixers — keyed by a substring that must appear in the DAT
-# system name (case-insensitive), same matching convention as ROM_EXTENSIONS in
-# handlers/registry.py.  Add new entries here to extend the export pipeline for
-# a system without touching the base fixers.
+# ── Fixer instances ────────────────────────────────────────────────────────
+_header_strip = HeaderStripFixer()
+_rename_ext = RenameExtFixer()
+_remove_embedded = RemoveEmbeddedFixer()
+_zip_package = ZipPackageFixer()
+_loose_file = LooseFileFixer()
+_n64_byteorder = N64ByteOrderFixer()
+
+# ── Per-system fixer pipelines ─────────────────────────────────────────────
+# Each entry declares the *complete* pipeline for a system.  Systems not
+# listed here fall back to _DEFAULT_FIXERS (cartridge-style: includes zip
+# packaging).  Disc-based systems explicitly use _DISC_FIXERS (no archiving).
+#
+# Keys are substrings matched case-insensitively against the DAT system name,
+# the same convention as ROM_EXTENSIONS in handlers/registry.py.
+
+_DEFAULT_FIXERS: list = [_header_strip, _rename_ext, _remove_embedded, _zip_package]
+
+_ps2_fixers = [_remove_embedded, _loose_file]
+_psp_fixers = [_remove_embedded, _loose_file]
+_ps1_fixers = [_loose_file]
+_dc_fixers = [_loose_file]
+_saturn_fixers = [_loose_file]
+_segacd_fixers = [_loose_file]
+_n64_fixers = [_header_strip, _rename_ext, _remove_embedded, _zip_package, _n64_byteorder]
+
 SYSTEM_FIXERS: dict[str, list] = {
-    "Nintendo 64": [N64ByteOrderFixer()],
+    # Cartridge overrides
+    "Nintendo 64": _n64_fixers,
+    "N64": _n64_fixers,
+    # Disc-based: single-file images (strip junk, export loose)
+    "PlayStation 2": _ps2_fixers,
+    "PS2": _ps2_fixers,
+    "PlayStation Portable": _psp_fixers,
+    "PSP": _psp_fixers,
+    # Disc-based: may have companion files (.cue+.bin, .gdi+tracks)
+    "PlayStation": _ps1_fixers,
+    "PS1": _ps1_fixers,
+    "PSX": _ps1_fixers,
+    "Dreamcast": _dc_fixers,
+    "Saturn": _saturn_fixers,
+    "Sega CD": _segacd_fixers,
 }
 
 
-def get_system_fixers(dat_name: str) -> list:
-    """Return extra fixers for a system, or [] if none are registered.
+def get_fixers_for_system(system_name: str) -> list:
+    """Return the complete fixer pipeline for a system.
 
-    Performs substring matching on *dat_name* (case-insensitive), identical to
-    how :func:`roms4me.handlers.registry.get_rom_extensions` resolves systems.
-    All matching entries are merged in the order they appear in the registry.
+    Performs case-insensitive substring matching on *system_name*.  The longest
+    matching key wins (so "PlayStation 2" matches before "PlayStation").
+    Systems with no match use the default cartridge pipeline.
     """
-    result = []
-    lower = dat_name.lower()
-    for key, fixers in SYSTEM_FIXERS.items():
+    lower = system_name.lower()
+    for key in sorted(SYSTEM_FIXERS, key=len, reverse=True):
         if key.lower() in lower:
-            result.extend(fixers)
-    return result
+            return SYSTEM_FIXERS[key]
+    return _DEFAULT_FIXERS
+
+
+def system_supports_archiving(system_name: str) -> bool:
+    """Return True if the system's fixer pipeline includes ZipPackageFixer."""
+    return any(isinstance(f, ZipPackageFixer) for f in get_fixers_for_system(system_name))

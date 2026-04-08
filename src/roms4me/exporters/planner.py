@@ -6,7 +6,7 @@ from pathlib import Path
 
 from roms4me.analyzers.base import Suggestion
 from roms4me.exporters.base import ExportPlan
-from roms4me.exporters.fixers import ALL_FIXERS, get_system_fixers
+from roms4me.exporters.fixers import get_fixers_for_system
 from roms4me.handlers.registry import get_rom_extensions
 from roms4me.models.dat import DatFile
 
@@ -21,16 +21,9 @@ def plan_export(
 ) -> ExportPlan:
     """Generate an export plan for a ROM given an analysis suggestion.
 
-    Runs the base fixers (ALL_FIXERS) followed by any system-specific fixers
-    registered in SYSTEM_FIXERS for *system_name* (or *dat.name* when
-    *system_name* is omitted).  New system-specific fixers can be added to
-    ``exporters/fixers.SYSTEM_FIXERS`` without touching this function.
+    Runs the complete fixer pipeline declared for the system in
+    ``SYSTEM_FIXERS`` (or the default cartridge pipeline for unlisted systems).
     """
-    plan = ExportPlan(
-        rom_file=rom_path.name,
-        target_name=f"{suggestion.dat_game_name}.zip",
-    )
-
     # Find the DAT ROM entry for the suggested game
     dat_rom_name = ""
     dat_rom_ext = ""
@@ -41,6 +34,10 @@ def plan_export(
                 dat_rom_ext = Path(dat_rom_name).suffix.lower()
             break
 
+    # Default target: loose file with DAT ROM name
+    target_name = dat_rom_name or f"{suggestion.dat_game_name}{rom_path.suffix}"
+    plan = ExportPlan(rom_file=rom_path.name, target_name=target_name)
+
     # Accepted ROM extensions for this system (used to select primary file from archives)
     accepted_exts: set[str] | None = set(get_rom_extensions(dat.name)) or None
 
@@ -49,9 +46,9 @@ def plan_export(
     if not rom_data:
         return plan
 
-    # Run base fixers + any system-specific fixers
+    # Run the declarative fixer pipeline for this system
     resolve_name = system_name or dat.name
-    fixers = ALL_FIXERS + get_system_fixers(resolve_name)
+    fixers = get_fixers_for_system(resolve_name)
     for fixer in fixers:
         try:
             steps = fixer.suggest(
@@ -63,6 +60,15 @@ def plan_export(
             plan.steps.extend(steps)
         except Exception as e:
             log.warning("Fixer %s failed for %s: %s", fixer.name, rom_path.name, e)
+
+    # Update target_name based on the output packaging step
+    for step in plan.steps:
+        if step.name == "compress_package":
+            plan.target_name = step.params.get("zip_name", plan.target_name)
+            break
+        if step.name == "loose_file":
+            plan.target_name = step.params.get("target_name", plan.target_name)
+            break
 
     return plan
 

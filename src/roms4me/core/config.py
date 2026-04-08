@@ -31,7 +31,6 @@ class ExportSettings(BaseModel):
     dest: str = ""
     rom_only: bool = True
     one_game_one_rom: bool = True
-    archive_format: str = "zip"  # "zip" | "7z"
     region_priority: str = "USA, World, Europe, Japan"
     system_options: dict[str, bool] = {}
 
@@ -43,6 +42,13 @@ class ExportSettings(BaseModel):
                 opts = data.setdefault("system_options", {})
                 if isinstance(opts, dict) and "convert_byteorder" not in opts:
                     opts["convert_byteorder"] = bool(cb)
+        # Migrate legacy archive_format into system_options.compress_7z
+        if "archive_format" in data:
+            af = data.pop("archive_format")
+            if af == "7z":
+                opts = data.setdefault("system_options", {})
+                if isinstance(opts, dict) and "compress_7z" not in opts:
+                    opts["compress_7z"] = True
         super().__init__(**data)
 
 

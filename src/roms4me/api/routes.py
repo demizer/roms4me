@@ -1170,13 +1170,10 @@ async def export_roms(system_name: str, req: dict) -> dict:
     files = list(dict.fromkeys(req.get("files", [])))
     dest = req.get("dest", "").strip()
     region_priority = [r.strip() for r in req.get("region_priority", []) if r.strip()]
-    archive_format = req.get("archive_format", "zip").strip().lower()
-    if archive_format not in {"zip", "7z"}:
-        archive_format = "zip"
     rom_only = bool(req.get("rom_only", True))
     system_options: dict[str, bool] = req.get("system_options", {})
+    archive_format = "7z" if system_options.get("compress_7z") else "zip"
     convert_byteorder = bool(system_options.get("convert_byteorder", False))
-    extract_disc_image = bool(system_options.get("extract_disc_image", False))
 
     if not files:
         raise HTTPException(status_code=400, detail="No files specified")
@@ -1193,7 +1190,7 @@ async def export_roms(system_name: str, req: dict) -> dict:
     def run():
         try:
             _do_export(scan, system_name, files, Path(dest), region_priority,
-                       archive_format, rom_only, convert_byteorder, extract_disc_image)
+                       archive_format, rom_only, convert_byteorder)
         finally:
             scan_log_mod.scan_running = False
 
@@ -1237,11 +1234,22 @@ def _apply_region_priority(
                 return idx
         return len(region_priority)
 
+    no_match = len(region_priority)
     auto_excluded: set[str] = set()
     for group in groups.values():
-        if len(group) <= 1:
+        if len(group) == 1:
+            # Single file: exclude if it doesn't match any priority region
+            filename, game_name = group[0]
+            if _score((filename, game_name)) >= no_match:
+                auto_excluded.add(filename)
             continue
+        # Multiple files: keep only the best-ranked region(s)
         best = min(_score(item) for item in group)
+        # If even the best doesn't match any priority, exclude the whole group
+        if best >= no_match:
+            for filename, _gn in group:
+                auto_excluded.add(filename)
+            continue
         for filename, game_name in group:
             if _score((filename, game_name)) > best:
                 auto_excluded.add(filename)
@@ -1251,8 +1259,7 @@ def _apply_region_priority(
 
 def _do_export(scan, system_name: str, files: list[str], dest_dir: Path,
                region_priority: list[str] | None = None, archive_format: str = "zip",
-               rom_only: bool = True, convert_byteorder: bool = False,
-               extract_disc_image: bool = False):
+               rom_only: bool = True, convert_byteorder: bool = False):
     """Execute exports for selected ROMs (called from background thread)."""
     from roms4me.analyzers.base import Suggestion
     from roms4me.exporters.executor import execute_export
@@ -1395,8 +1402,7 @@ def _do_export(scan, system_name: str, files: list[str], dest_dir: Path,
             try:
                 out_path = execute_export(rom_file, export_plan, dest_dir,
                                           archive_format=archive_format, rom_only=rom_only,
-                                          convert_byteorder=convert_byteorder,
-                                          extract_disc_image=extract_disc_image)
+                                          convert_byteorder=convert_byteorder)
                 scan.info(f"  → {out_path.name}", color="green")
                 exported += 1
             except Exception as e:

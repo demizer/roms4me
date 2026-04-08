@@ -13,7 +13,7 @@ const exportQueue = [];
 
 /**
  * Settings snapshot captured at queue-add time, keyed by system name.
- * @type {Record<string, {dest: string, rom_only: boolean, archive_format: string, region_priority: string, system_options: Record<string, boolean>}>}
+ * @type {Record<string, {dest: string, rom_only: boolean, region_priority: string, system_options: Record<string, boolean>}>}
  */
 const exportSystemSettings = {};
 
@@ -502,7 +502,6 @@ function _openExportSettingsModal(settings, rowCount) {
     document.getElementById("export-dest-input").value = settings.dest || "";
     document.getElementById("export-rom-only").checked = settings.rom_only !== false;
     document.getElementById("export-one-game").checked = settings.one_game_one_rom !== false;
-    document.getElementById("export-use-7z").checked = settings.archive_format === "7z";
     document.getElementById("export-region-input").value =
         settings.region_priority || "USA, World, Europe, Japan";
     document.getElementById("export-conflict-notice").hidden = true;
@@ -526,7 +525,7 @@ function _openExportSettingsModal(settings, rowCount) {
     }
 
     const allInputIds = ["export-dest-input", "export-rom-only", "export-one-game",
-                         "export-use-7z", "export-region-input"];
+                         "export-region-input"];
     for (const id of allInputIds) {
         document.getElementById(id).disabled = false;
     }
@@ -556,7 +555,6 @@ document.getElementById("export-settings-confirm").addEventListener("click", () 
     const dest = document.getElementById("export-dest-input").value.trim();
     const romOnly = document.getElementById("export-rom-only").checked;
     const oneGame = document.getElementById("export-one-game").checked;
-    const use7z = document.getElementById("export-use-7z").checked;
     const regionRaw = document.getElementById("export-region-input").value.trim();
     const regionPriority = regionRaw ? regionRaw.split(",").map((s) => s.trim()).filter(Boolean) : [];
 
@@ -574,7 +572,6 @@ document.getElementById("export-settings-confirm").addEventListener("click", () 
             dest,
             rom_only: romOnly,
             one_game_one_rom: oneGame,
-            archive_format: use7z ? "7z" : "zip",
             region_priority: regionRaw,
             system_options: systemOptions,
         }),
@@ -655,7 +652,7 @@ document.getElementById("export-settings-confirm").addEventListener("click", () 
         // Gray out settings — items are already queued
         document.getElementById("export-settings-cancel").hidden = true;
         for (const id of ["export-dest-input", "export-rom-only", "export-one-game",
-                           "export-use-7z", "export-region-input"]) {
+                           "export-region-input"]) {
             document.getElementById(id).disabled = true;
         }
         for (const cb of document.querySelectorAll("#export-system-options input[data-sysopt]")) {
@@ -669,12 +666,12 @@ document.getElementById("export-settings-confirm").addEventListener("click", () 
         return;
     }
 
-    // Snapshot the settings for this system at queue-add time
+    // Snapshot the settings for this system at queue-add time.
+    // Only include region_priority when one_game_one_rom is active.
     exportSystemSettings[currentSystem] = {
         dest,
         rom_only: romOnly,
-        archive_format: use7z ? "7z" : "zip",
-        region_priority: regionRaw,
+        region_priority: oneGame ? regionRaw : "",
         system_options: systemOptions,
     };
 
@@ -730,8 +727,9 @@ function showQueue() {
 
     for (const [system, items] of Object.entries(bySystem)) {
         const s = exportSystemSettings[system] || {};
-        const fmt = s.archive_format === "7z" ? "7z" : "zip";
-        const flags = [s.dest || "(no destination)", fmt, s.rom_only !== false ? "ROM only" : null, s.convert_byteorder ? "convert byte order" : null].filter(Boolean);
+        const sysOpts = s.system_options || {};
+        const fmt = sysOpts.compress_7z ? "7z" : "zip";
+        const flags = [s.dest || "(no destination)", fmt, s.rom_only !== false ? "ROM only" : null, sysOpts.convert_byteorder ? "convert byte order" : null].filter(Boolean);
         appendScanLogLine(verifyLog, "[blue]" + system + " — " + flags.join(" · ") + " (" + items.length + " item" + (items.length !== 1 ? "s" : "") + ")");
         for (const item of items) {
             const plan = item.plan ? " [" + item.plan + "]" : "";
@@ -825,7 +823,6 @@ async function processQueue() {
         const regionPriority = s.region_priority
             ? s.region_priority.split(",").map((r) => r.trim()).filter(Boolean)
             : [];
-        const archiveFormat = s.archive_format || "zip";
         const romOnly = s.rom_only !== false;
         const systemOptions = s.system_options || {};
         const files = items.map((i) => i.file_name);
@@ -838,7 +835,6 @@ async function processQueue() {
                 body: JSON.stringify({
                     files, dest,
                     region_priority: regionPriority,
-                    archive_format: archiveFormat,
                     rom_only: romOnly,
                     system_options: systemOptions,
                 }),
@@ -1030,9 +1026,10 @@ async function showRomAnalysis(row, activeTab = "data") {
         callout.className = "ra-callout";
         if (inQueue) {
             const dest = exportSettings.dest || "(no destination set)";
-            const fmt = exportSettings.archive_format === "7z" ? "7z" : "zip";
+            const sOpts = (exportSettings.system_options || {});
+            const fmt = sOpts.compress_7z ? "7z" : "zip";
             const romOnly = exportSettings.rom_only !== false;
-            const convertBO = exportSettings.convert_byteorder === true;
+            const convertBO = sOpts.convert_byteorder === true;
             callout.innerHTML =
                 '<span class="ra-callout-icon">&#10003;</span>' +
                 '<div class="ra-callout-body">' +
@@ -1056,8 +1053,9 @@ async function showRomAnalysis(row, activeTab = "data") {
         // Filter steps based on settings when queued
         let steps = data.export_steps;
         const romOnly = exportSettings.rom_only !== false;
-        const use7z = exportSettings.archive_format === "7z";
-        const convertBO = exportSettings.convert_byteorder === true;
+        const eOpts = (exportSettings.system_options || {});
+        const use7z = eOpts.compress_7z === true;
+        const convertBO = eOpts.convert_byteorder === true;
         if (inQueue && !romOnly) {
             steps = steps.filter((s) => s.name !== "remove_embedded");
         }

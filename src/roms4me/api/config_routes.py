@@ -68,9 +68,6 @@ async def get_export_settings_route(system_name: str) -> dict:
 @router.put("/export-settings/{system_name}")
 async def put_export_settings_route(system_name: str, req: dict) -> dict:
     """Save export settings for a system."""
-    archive_format = req.get("archive_format", "zip")
-    if archive_format not in ("zip", "7z"):
-        archive_format = "zip"
     system_options = req.get("system_options", {})
     # Only keep options that are actually defined for this system
     valid_ids = {o.id for o in get_system_export_options(system_name)}
@@ -79,7 +76,6 @@ async def put_export_settings_route(system_name: str, req: dict) -> dict:
         dest=req.get("dest", ""),
         rom_only=bool(req.get("rom_only", True)),
         one_game_one_rom=bool(req.get("one_game_one_rom", True)),
-        archive_format=archive_format,
         region_priority=req.get("region_priority", "USA, World, Europe, Japan"),
         system_options=system_options,
     )

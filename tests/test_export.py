@@ -459,14 +459,24 @@ def test_region_priority_falls_back_to_world():
     assert "Tetris (Japan).zip" in excluded
 
 
-def test_region_priority_single_file_not_excluded():
-    """Single file in a group is never excluded."""
+def test_region_priority_single_file_matching_not_excluded():
+    """Single file matching a priority region is kept."""
     from roms4me.api.routes import _apply_region_priority
 
     excluded = _apply_region_priority(
         [("Game (USA).zip", "Game (USA)")], ["USA", "World", "Europe", "Japan"]
     )
     assert excluded == set()
+
+
+def test_region_priority_single_file_non_matching_excluded():
+    """Single file that doesn't match any priority region is excluded."""
+    from roms4me.api.routes import _apply_region_priority
+
+    excluded = _apply_region_priority(
+        [("Game (Korea).zip", "Game (Korea)")], ["USA"]
+    )
+    assert "Game (Korea).zip" in excluded
 
 
 def test_region_priority_empty_list_no_filtering():
@@ -504,3 +514,176 @@ def test_region_priority_independent_per_game_title():
     ]
     excluded = _apply_region_priority(files, ["USA", "World", "Europe", "Japan"])
     assert excluded == {"Mario (Japan).zip", "Zelda (Europe).zip"}
+
+
+def test_region_priority_excludes_entire_group_when_none_match():
+    """If no file in a multi-file group matches any priority, all are excluded."""
+    from roms4me.api.routes import _apply_region_priority
+
+    files = [
+        ("Naruto (Japan).zip", "Naruto (Japan)"),
+        ("Naruto (Korea).zip", "Naruto (Korea)"),
+    ]
+    excluded = _apply_region_priority(files, ["USA"])
+    assert excluded == {"Naruto (Japan).zip", "Naruto (Korea).zip"}
+
+
+# ---------------------------------------------------------------------------
+# Disc system export: loose file output (no archiving)
+# ---------------------------------------------------------------------------
+
+
+def test_disc_system_plan_has_loose_file_step(tmp_path):
+    """PS2 fixer pipeline produces a loose_file step, not compress_package."""
+    from roms4me.analyzers.base import Suggestion
+    from roms4me.exporters.planner import plan_export
+
+    iso_data = b"\x00" * 2048  # minimal ISO-like blob
+    src = _make_zip(tmp_path / "God of War (USA).zip", "God of War (USA).iso", iso_data)
+    dat = _make_dat("God of War (USA)", "God of War (USA).iso", iso_data)
+
+    suggestion = Suggestion(
+        dat_game_name="God of War (USA)",
+        confidence=1.0,
+        reason="",
+        crc_match=True,
+    )
+
+    plan = plan_export(src, suggestion, dat, system_name="Sony - PlayStation 2")
+    step_names = [s.name for s in plan.steps]
+
+    assert "loose_file" in step_names, f"Expected loose_file step, got: {step_names}"
+    assert "compress_package" not in step_names, "Disc system should not have compress_package"
+
+
+def test_disc_export_from_zip_produces_loose_iso(tmp_path):
+    """Exporting a PS2 ISO from a zip produces a loose .iso file, not an archive."""
+    iso_data = b"PS2 ISO DATA" * 100
+
+    src = _make_zip(tmp_path / "God of War (USA).zip", "God of War (USA).iso", iso_data)
+    dest = tmp_path / "output"
+
+    plan = ExportPlan(
+        rom_file="God of War (USA).zip",
+        target_name="God of War (USA).iso",
+        steps=[
+            ExportStep(
+                name="loose_file",
+                description="Export as: God of War (USA).iso",
+                params={"target_name": "God of War (USA).iso"},
+            ),
+        ],
+    )
+
+    out = execute_export(src, plan, dest)
+
+    assert out == dest / "God of War (USA).iso"
+    assert out.suffix == ".iso"
+    assert out.read_bytes() == iso_data
+
+
+def test_disc_export_from_7z_produces_loose_iso(tmp_path):
+    """Exporting a PS2 ISO from a 7z produces a loose .iso file."""
+    import py7zr
+
+    iso_data = b"PS2 ISO DATA" * 100
+    src_7z = tmp_path / "Kingdom Hearts (USA).7z"
+
+    # Create a .7z containing the ISO
+    inner_iso = tmp_path / "Kingdom Hearts (USA).iso"
+    inner_iso.write_bytes(iso_data)
+    with py7zr.SevenZipFile(src_7z, "w") as szf:
+        szf.write(inner_iso, "Kingdom Hearts (USA).iso")
+    inner_iso.unlink()
+
+    dest = tmp_path / "output"
+
+    plan = ExportPlan(
+        rom_file="Kingdom Hearts (USA).7z",
+        target_name="Kingdom Hearts (USA).iso",
+        steps=[
+            ExportStep(
+                name="loose_file",
+                description="Export as: Kingdom Hearts (USA).iso",
+                params={"target_name": "Kingdom Hearts (USA).iso"},
+            ),
+        ],
+    )
+
+    out = execute_export(src_7z, plan, dest)
+
+    assert out == dest / "Kingdom Hearts (USA).iso"
+    assert out.suffix == ".iso"
+    assert out.read_bytes() == iso_data
+
+
+def test_disc_export_preserves_chd_extension(tmp_path):
+    """Loose .chd file exports as .chd, not the DAT extension."""
+    from roms4me.exporters.fixers import LooseFileFixer
+
+    chd_data = b"MComprHD"  # CHD magic (enough for test)
+    src = tmp_path / "Some Game.chd"
+    src.write_bytes(chd_data)
+
+    fixer = LooseFileFixer()
+    steps = fixer.suggest(
+        rom_file=src,
+        rom_data=chd_data,
+        dat_game_name="Some Game (USA)",
+        dat_rom_name="Some Game (USA).bin",  # DAT says .bin
+        dat_rom_ext=".bin",
+    )
+
+    assert len(steps) == 1
+    target = steps[0].params["target_name"]
+    assert target == "Some Game (USA).chd", f"Expected .chd extension, got: {target}"
+
+
+def test_disc_export_strips_junk_from_zip(tmp_path):
+    """PS2 pipeline includes RemoveEmbeddedFixer to strip non-ROM files."""
+    from roms4me.analyzers.base import Suggestion
+    from roms4me.exporters.planner import plan_export
+    from roms4me.models.dat import DatFile, GameEntry, RomEntry
+
+    iso_data = b"\x00" * 2048
+    zip_path = tmp_path / "Game (USA).zip"
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        zf.writestr("Game (USA).iso", iso_data)
+        zf.writestr("readme.nfo", b"scene info\n")
+
+    crc = f"{zlib.crc32(iso_data) & 0xFFFFFFFF:08x}"
+    rom = RomEntry(name="Game (USA).iso", size=len(iso_data), crc=crc)
+    game = GameEntry(name="Game (USA)", description="Game (USA)", roms=[rom])
+    # DAT name must match PS2 so get_rom_extensions returns .iso etc.
+    dat = DatFile(name="Sony - PlayStation 2", file_path="", games=[game])
+
+    suggestion = Suggestion(
+        dat_game_name="Game (USA)",
+        confidence=1.0,
+        reason="",
+        crc_match=True,
+    )
+
+    plan = plan_export(zip_path, suggestion, dat, system_name="Sony - PS2")
+    step_names = [s.name for s in plan.steps]
+
+    assert "remove_embedded" in step_names, f"PS2 should strip junk files, got: {step_names}"
+    assert "loose_file" in step_names
+
+
+def test_no_compress_option_for_disc_systems():
+    """Disc systems should not offer compress_7z option."""
+    from roms4me.exporters.fixers import system_supports_archiving
+
+    for name in ["Sony - PS2", "Sony - PlayStation 2", "Sony - PSP", "Sony - PS1",
+                 "Sega - Dreamcast", "Sega - Saturn", "Sega - Sega CD"]:
+        assert not system_supports_archiving(name), f"{name} should not support archiving"
+
+
+def test_compress_option_for_cartridge_systems():
+    """Cartridge systems should offer compress_7z option."""
+    from roms4me.exporters.fixers import system_supports_archiving
+
+    for name in ["Nintendo - N64", "Nintendo - Super Nintendo Entertainment System",
+                 "Nintendo - Game Boy Advance"]:
+        assert system_supports_archiving(name), f"{name} should support archiving"
